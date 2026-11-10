@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#141418">
+<title>AR 전시 데모</title>
+<style>
+  :root {
+    --ink: #141418;
+    --paper: #f6f4ee;
+    --muted: #6b6a66;
+    --line: #dcd9d0;
+    --accent: #de4a28;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--ink); color: var(--paper);
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Malgun Gothic", sans-serif;
+    -webkit-font-smoothing: antialiased; overflow: hidden; }
+  #ar { position: fixed; inset: 0; }
+  #ar video { object-fit: cover; }
+
+  .screen { position: fixed; inset: 0; display: flex; flex-direction: column; justify-content: flex-end;
+    padding: 24px 20px calc(24px + env(safe-area-inset-bottom)); z-index: 10; }
+  .screen[hidden] { display: none; }
+
+  /* 시작 화면 */
+  #intro { background: var(--paper); color: var(--ink); }
+  #intro .thumb { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 8px 0 24px; }
+  #intro .thumb img { max-width: 62%; max-height: 100%; border: 1px solid var(--line); border-radius: 4px; }
+  #intro h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
+  #intro p { margin-top: 8px; font-size: 15px; line-height: 1.55; color: var(--muted); }
+  .btn { display: block; width: 100%; margin-top: 24px; padding: 16px; border: 0; border-radius: var(--radius);
+    background: var(--ink); color: var(--paper); font: inherit; font-size: 16px; font-weight: 600; cursor: pointer; }
+  .btn:active { opacity: .85; }
+  .btn.ghost { background: transparent; color: inherit; border: 1px solid currentColor; margin-top: 10px; }
+  .note { margin-top: 12px; font-size: 12px; color: var(--muted); text-align: center; }
+
+  /* 스캔 안내 */
+  #scan { justify-content: center; align-items: center; pointer-events: none; background: none; }
+  #scan .frame { position: relative; width: min(64vw, 300px); aspect-ratio: 1000 / 1400; }
+  #scan .frame img { width: 100%; height: 100%; object-fit: contain; opacity: .35; }
+  #scan .frame i { position: absolute; width: 28px; height: 28px; border: 0 solid var(--paper); }
+  #scan .frame i:nth-of-type(1) { top: -10px; left: -10px; border-top-width: 3px; border-left-width: 3px; }
+  #scan .frame i:nth-of-type(2) { top: -10px; right: -10px; border-top-width: 3px; border-right-width: 3px; }
+  #scan .frame i:nth-of-type(3) { bottom: -10px; left: -10px; border-bottom-width: 3px; border-left-width: 3px; }
+  #scan .frame i:nth-of-type(4) { bottom: -10px; right: -10px; border-bottom-width: 3px; border-right-width: 3px; }
+  #scan .msg { margin-top: 28px; padding: 10px 16px; border-radius: 999px; background: rgba(20,20,24,.72); font-size: 14px; }
+
+  /* 상단 바 */
+  #bar { position: fixed; top: 0; left: 0; right: 0; z-index: 11; display: flex; justify-content: space-between; align-items: center;
+    padding: calc(12px + env(safe-area-inset-top)) 16px 12px; pointer-events: none; }
+  #bar[hidden] { display: none; }
+  #bar .tag { font-size: 13px; padding: 6px 10px; border-radius: 6px; background: rgba(20,20,24,.6); }
+  #bar .tag.on { background: var(--accent); }
+  #bar button { pointer-events: auto; border: 0; background: rgba(20,20,24,.6); color: var(--paper); font: inherit; font-size: 13px;
+    padding: 6px 10px; border-radius: 6px; cursor: pointer; }
+
+  /* 로딩·오류 */
+  #status { justify-content: center; align-items: center; text-align: center; background: var(--ink); }
+  #status h2 { font-size: 18px; font-weight: 600; }
+  #status p { margin-top: 10px; font-size: 14px; line-height: 1.6; color: #b9b7b0; max-width: 320px; }
+  #status .btn { max-width: 320px; background: var(--paper); color: var(--ink); }
+  #status .btn.ghost { background: transparent; color: var(--paper); }
+  .spinner { width: 28px; height: 28px; margin-bottom: 18px; border: 2px solid #44434a; border-top-color: var(--paper); border-radius: 50%;
+    animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "./lib/three/three.module.js",
+  "three/addons/": "./lib/three/addons/"
+} }
+</script>
+<script src="config.js"></script>
+</head>
+<body>
+<div id="ar"></div>
+
+<section id="intro" class="screen">
+  <div class="thumb"><img id="introImg" alt="인식할 그래픽"></div>
+  <h1 id="introTitle"></h1>
+  <p id="introSub"></p>
+  <button class="btn" id="startBtn">AR 시작하기</button>
+  <p class="note">카메라 권한을 허용해 주세요. 영상은 저장되지 않습니다.</p>
+</section>
+
+<section id="scan" class="screen" hidden>
+  <div class="frame"><img id="scanImg" alt=""><i></i><i></i><i></i><i></i></div>
+  <div class="msg">이 그래픽을 화면에 비춰 주세요</div>
+</section>
+
+<div id="bar" hidden>
+  <span class="tag" id="foundTag">찾는 중</span>
+  <button id="stopBtn">종료</button>
+</div>
+
+<section id="status" class="screen" hidden>
+  <div class="spinner" id="spinner"></div>
+  <h2 id="statusTitle">준비 중</h2>
+  <p id="statusText"></p>
+  <div id="statusActions" style="width:100%;display:flex;flex-direction:column;align-items:center"></div>
+</section>
+
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+
+const CFG = window.AR_CONFIG;
+const $ = (id) => document.getElementById(id);
+const deg = (d) => d * Math.PI / 180;
+
+/* ── 첫 화면 ── */
+$("introTitle").textContent = CFG.title;
+$("introSub").textContent = CFG.subtitle;
+$("introImg").src = CFG.targets[0].image;
+document.title = CFG.title;
+
+function show(id, on) { $(id).hidden = !on; }
+function status(title, text, actions = [], loading = false) {
+  show("status", true);
+  $("spinner").style.display = loading ? "block" : "none";
+  $("statusTitle").textContent = title;
+  $("statusText").innerHTML = text;
+  const box = $("statusActions"); box.innerHTML = "";
+  actions.forEach((a, i) => {
+    const b = document.createElement(a.href ? "a" : "button");
+    b.className = "btn" + (i > 0 ? " ghost" : "");
+    b.textContent = a.label;
+    if (a.href) { b.href = a.href; b.style.textAlign = "center"; b.style.textDecoration = "none"; }
+    if (a.onClick) b.onclick = a.onClick;
+    box.appendChild(b);
+  });
+}
+
+/* ── 인앱 브라우저 감지 (카카오톡·네이버·인스타 등은 카메라가 막히는 경우가 많음) ── */
+const ua = navigator.userAgent;
+const inApp = /KAKAOTALK|NAVER|Instagram|FBAN|FBAV|Line\/|everytimeApp|DaumApps/i.test(ua);
+const isAndroid = /Android/i.test(ua);
+function openExternal() {
+  const url = location.href;
+  if (/KAKAOTALK/i.test(ua)) { location.href = "kakaotalk://web/openExternal?url=" + encodeURIComponent(url); return; }
+  if (isAndroid) { location.href = "intent://" + url.replace(/^https?:\/\//, "") + "#Intent;scheme=https;package=com.android.chrome;end"; return; }
+  navigator.clipboard?.writeText(url);
+  alert("주소를 복사했습니다. Safari를 열고 주소창에 붙여넣어 주세요.");
+}
+if (inApp) {
+  status("다른 브라우저로 열어 주세요",
+    "지금 앱 안의 브라우저에서는 카메라가 동작하지 않을 수 있습니다.<br>" + (isAndroid ? "Chrome" : "Safari") + "에서 열어 주세요.",
+    [{ label: (isAndroid ? "Chrome" : "Safari") + "으로 열기", onClick: openExternal },
+     { label: "그래도 여기서 시도", onClick: () => show("status", false) }]);
+}
+
+/* ── 임시 모델 (GLB가 없을 때) ── */
+function placeholderModel() {
+  const g = new THREE.Group();
+  const gem = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(0.32, 0),
+    new THREE.MeshStandardMaterial({ color: 0xde4a28, roughness: .35, metalness: .1, flatShading: true }));
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(0.52, 0.025, 12, 96),
+    new THREE.MeshStandardMaterial({ color: 0x1e5ac8, roughness: .4 }));
+  ring.rotation.x = deg(75);
+  const dots = new THREE.Group();
+  const dotMat = new THREE.MeshStandardMaterial({ color: 0xf5be1e, roughness: .4 });
+  for (let i = 0; i < 3; i++) {
+    const d = new THREE.Mesh(new THREE.SphereGeometry(0.06, 20, 16), dotMat);
+    const a = i / 3 * Math.PI * 2;
+    d.position.set(Math.cos(a) * 0.52, 0, Math.sin(a) * 0.52);
+    dots.add(d);
+  }
+  dots.rotation.x = deg(75);
+  g.add(gem, ring, dots);
+  g.userData.tick = (t) => { gem.rotation.y = t * 0.8; gem.position.y = Math.sin(t * 2) * 0.03; dots.rotation.z = t * 1.2; };
+  return g;
+}
+
+/* ── GLB 모델 불러오기 ── */
+const loader = new GLTFLoader();
+const mixers = [];
+async function buildModel(t) {
+  if (!t.model) return placeholderModel();
+  const gltf = await loader.loadAsync(t.model);
+  const root = gltf.scene;
+  // 모델 크기를 1 단위로 맞춘 뒤 scale 적용 → 어떤 모델이 와도 같은 기준
+  const box = new THREE.Box3().setFromObject(root);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const k = 1 / Math.max(size.x, size.y, size.z || 1);
+  root.position.sub(center).multiplyScalar(k);
+  root.scale.setScalar(k);
+  const wrap = new THREE.Group(); wrap.add(root);
+  if (gltf.animations?.length) {
+    const mixer = new THREE.AnimationMixer(root);
+    gltf.animations.forEach((clip) => mixer.clipAction(clip).play());
+    mixers.push(mixer);
+  }
+  return wrap;
+}
+
+/* ── 인식 파일 준비 ──
+   assets/targets.mind 가 있으면 그대로 쓰고,
+   없으면 config 의 그래픽 이미지로 이 자리에서 변환 (처음 한 번 수십 초, 전시 전에는 compiler.html 로 미리 만들어 두세요) */
+async function resolveTargets() {
+  try {
+    const r = await fetch(CFG.mindFile, { cache: "no-store" });
+    if (r.ok) return CFG.mindFile;
+  } catch (_) {}
+  const { Compiler } = await import("./lib/mindar/mindar-image.prod.js");
+  const imgs = await Promise.all(CFG.targets.map((t) => new Promise((res, rej) => {
+    const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = t.image;
+  })));
+  const compiler = new Compiler();
+  await compiler.compileImageTargets(imgs, (p) => {
+    status("그래픽 인식 준비 중", `처음 한 번만 필요한 작업입니다. ${Math.floor(p)}%`, [], true);
+  });
+  const buf = await compiler.exportData();
+  status("준비 중", "AR 엔진과 3D 모델을 불러오고 있습니다.", [], true);
+  return URL.createObjectURL(new Blob([buf]));
+}
+
+/* ── AR 시작 ── */
+let mindar = null;
+let running = false;
+
+async function start() {
+  if (!window.isSecureContext) {
+    status("HTTPS 주소가 필요합니다", "카메라는 https:// 주소에서만 켜집니다. 배포된 주소로 접속해 주세요.");
+    return;
+  }
+  show("intro", false);
+  status("준비 중", "AR 엔진과 3D 모델을 불러오고 있습니다.", [], true);
+
+  try {
+    const { MindARThree } = await import("./lib/mindar/mindar-image-three.prod.js");
+    const targetSrc = await resolveTargets();
+    mindar = new MindARThree({
+      container: $("ar"),
+      imageTargetSrc: targetSrc,
+      maxTrack: CFG.maxTrack || 1,
+      uiLoading: "no", uiScanning: "no", uiError: "no",
+      filterMinCF: 0.0001, filterBeta: 0.001,   // 떨림 보정
+      warmupTolerance: 5, missTolerance: 5
+    });
+    const { renderer, scene, camera } = mindar;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x444450, 2.2));
+    const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+    sun.position.set(0.5, 1, 1);
+    scene.add(sun);
+
+    const appear = [];
+    let foundCount = 0;
+    for (let i = 0; i < CFG.targets.length; i++) {
+      const t = CFG.targets[i];
+      const anchor = mindar.addAnchor(i);
+      const holder = new THREE.Group();
+      holder.position.set(...(t.position || [0, 0, 0.3]));
+      holder.rotation.set(...(t.rotation || [0, 0, 0]).map(deg));
+      const model = await buildModel(t);
+      model.scale.multiplyScalar(t.scale ?? 0.6);
+      holder.add(model);
+      anchor.group.add(holder);
+      const state = { holder, model, base: model.scale.clone(), shown: 0, spin: t.spin };
+      appear.push(state);
+      anchor.onTargetFound = () => { state.shown = performance.now(); foundCount++; onFound(t.name); };
+      anchor.onTargetLost = () => { state.shown = 0; foundCount = Math.max(0, foundCount - 1); if (!foundCount) onLost(); };
+    }
+
+    await mindar.start();
+    running = true;
+    show("status", false);
+    show("scan", true);
+    show("bar", true);
+
+    const clock = new THREE.Clock();
+    renderer.setAnimationLoop(() => {
+      const dt = clock.getDelta(), t = clock.elapsedTime, now = performance.now();
+      mixers.forEach((m) => m.update(dt));
+      for (const s of appear) {
+        if (s.shown) {
+          // 나타날 때 0.4초 동안 커지며 등장
+          const p = Math.min(1, (now - s.shown) / 400);
+          const e = 1 - Math.pow(1 - p, 3);
+          s.model.scale.copy(s.base).multiplyScalar(0.001 + e);
+        }
+        if (s.spin) s.holder.rotation.y += dt * 0.5;
+        s.model.userData.tick?.(t);
+      }
+      renderer.render(scene, camera);
+    });
+  } catch (err) {
+    console.error(err);
+    const name = err && (err.name || "");
+    if (/NotAllowed|Permission/i.test(name) || /permission/i.test(String(err))) {
+      status("카메라 권한이 필요합니다",
+        "브라우저 설정에서 이 사이트의 카메라 권한을 허용한 뒤 다시 시도해 주세요.",
+        [{ label: "다시 시도", onClick: () => location.reload() }]);
+    } else if (/NotFound|Overconstrained/i.test(name)) {
+      status("카메라를 찾을 수 없습니다", "카메라가 있는 기기에서 접속해 주세요.",
+        [{ label: "다시 시도", onClick: () => location.reload() }]);
+    } else {
+      status("시작하지 못했습니다", "잠시 후 다시 시도해 주세요.<br><small>" + (err?.message || err) + "</small>",
+        [{ label: "다시 시도", onClick: () => location.reload() }]);
+    }
+  }
+}
+
+function onFound(name) {
+  show("scan", false);
+  $("foundTag").textContent = name;
+  $("foundTag").classList.add("on");
+  navigator.vibrate?.(30);
+}
+function onLost() {
+  show("scan", true);
+  $("foundTag").textContent = "찾는 중";
+  $("foundTag").classList.remove("on");
+}
+
+$("scanImg").src = CFG.targets[0].image;
+$("startBtn").onclick = start;
+$("stopBtn").onclick = () => {
+  if (mindar && running) { mindar.renderer.setAnimationLoop(null); mindar.stop(); running = false; }
+  show("scan", false); show("bar", false); show("intro", true);
+  location.reload();
+};
+</script>
+</body>
+</html>

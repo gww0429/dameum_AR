@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>인식 파일 만들기</title>
+<style>
+  :root { --ink:#141418; --paper:#ffffff; --bg:#f6f4ee; --muted:#6b6a66; --line:#dcd9d0; --accent:#de4a28; --radius:8px; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--ink); font-family: -apple-system, "Apple SD Gothic Neo", "Pretendard", "Malgun Gothic", sans-serif;
+    font-size: 14px; line-height: 1.6; padding: 40px 16px; }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 22px; letter-spacing: -0.02em; }
+  .lead { color: var(--muted); margin-top: 6px; }
+  section { margin-top: 28px; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; }
+  h2 { font-size: 15px; margin-bottom: 12px; }
+  ol { padding-left: 20px; color: var(--muted); }
+  ol li + li { margin-top: 4px; }
+  code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 13px; color: var(--ink); }
+  .drop { display: block; border: 1px dashed #b9b6ad; border-radius: var(--radius); padding: 28px; text-align: center; color: var(--muted); cursor: pointer; }
+  .drop:hover { border-color: var(--ink); color: var(--ink); }
+  .list { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; margin-top: 16px; }
+  .item { border: 1px solid var(--line); border-radius: 6px; padding: 8px; font-size: 12px; }
+  .item img { width: 100%; aspect-ratio: 3/4; object-fit: contain; background: var(--bg); display: block; }
+  .item b { display: block; margin-top: 6px; }
+  .item span { color: var(--muted); word-break: break-all; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+  button { border: 0; border-radius: 6px; padding: 10px 16px; font: inherit; font-weight: 600; cursor: pointer; background: var(--ink); color: #fff; }
+  button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+  button:disabled { opacity: .35; cursor: default; }
+  .bar { height: 6px; background: var(--bg); border-radius: 3px; margin-top: 16px; overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--ink); transition: width .2s; }
+  #msg { margin-top: 10px; color: var(--muted); min-height: 22px; }
+  #msg.ok { color: #1e7a4a; } #msg.err { color: var(--accent); }
+</style>
+<script type="importmap">
+{ "imports": { "three": "./lib/three/three.module.js", "three/addons/": "./lib/three/addons/" } }
+</script>
+</head>
+<body>
+<main>
+  <h1>인식 파일 만들기</h1>
+  <p class="lead">벽면 그래픽 이미지를 AR 인식 파일(<code>targets.mind</code>)로 변환합니다. 그래픽을 바꿀 때마다 한 번씩 실행하세요.</p>
+
+  <section>
+    <h2>1. 그래픽 이미지 선택</h2>
+    <label class="drop" for="file">PNG·JPG 파일을 선택하세요 (여러 장 가능, 선택한 순서 = 번호)</label>
+    <input type="file" id="file" accept="image/png,image/jpeg" multiple hidden>
+    <div class="list" id="list"></div>
+  </section>
+
+  <section>
+    <h2>2. 변환</h2>
+    <div class="row">
+      <button id="compileBtn" disabled>변환 시작</button>
+      <button id="downloadBtn" class="ghost" disabled>targets.mind 내려받기</button>
+      <button id="saveBtn" class="ghost" disabled hidden>assets 폴더에 바로 저장</button>
+    </div>
+    <div class="bar"><i id="prog"></i></div>
+    <p id="msg"></p>
+  </section>
+
+  <section>
+    <h2>3. 교체 방법</h2>
+    <ol>
+      <li>내려받은 <code>targets.mind</code>를 <code>assets</code> 폴더에 덮어씁니다.</li>
+      <li>그래픽 이미지도 <code>assets</code> 폴더에 넣습니다 (스캔 안내 화면에 쓰임).</li>
+      <li>3D 모델(<code>.glb</code>)을 <code>assets</code> 폴더에 넣습니다.</li>
+      <li><code>config.js</code>의 <code>targets</code>에 이미지·모델 경로를 적습니다. 순서는 위에서 선택한 순서와 같아야 합니다.</li>
+      <li>모델 크기·위치는 <code>scale</code>, <code>position</code> 값으로 조정합니다.</li>
+    </ol>
+  </section>
+</main>
+
+<script type="module">
+import { Compiler } from "./lib/mindar/mindar-image.prod.js";
+
+const $ = (id) => document.getElementById(id);
+let images = [];
+let result = null;
+
+function msg(text, cls = "") { $("msg").textContent = text; $("msg").className = cls; }
+
+$("file").onchange = async (e) => {
+  const files = [...e.target.files];
+  images = await Promise.all(files.map((f) => new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => res({ img, name: f.name });
+    img.onerror = rej;
+    img.src = URL.createObjectURL(f);
+  })));
+  $("list").innerHTML = images.map((x, i) =>
+    `<div class="item"><img src="${x.img.src}" alt=""><b>${i + 1}번</b><span>${x.name}<br>${x.img.naturalWidth}×${x.img.naturalHeight}</span></div>`).join("");
+  result = null;
+  $("compileBtn").disabled = !images.length;
+  $("downloadBtn").disabled = true; $("saveBtn").disabled = true;
+  msg(images.length ? `${images.length}장 선택됨` : "");
+};
+
+$("compileBtn").onclick = async () => {
+  $("compileBtn").disabled = true;
+  msg("변환 중입니다. 이미지 한 장에 10~30초 정도 걸립니다.");
+  try {
+    const compiler = new Compiler();
+    await compiler.compileImageTargets(images.map((x) => x.img), (p) => { $("prog").style.width = p.toFixed(1) + "%"; });
+    result = await compiler.exportData();
+    $("prog").style.width = "100%";
+    msg(`완료 — ${(result.byteLength / 1024).toFixed(0)}KB`, "ok");
+    $("downloadBtn").disabled = false; $("saveBtn").disabled = false;
+  } catch (err) {
+    console.error(err);
+    msg("변환에 실패했습니다: " + (err?.message || err), "err");
+  }
+  $("compileBtn").disabled = false;
+};
+
+$("downloadBtn").onclick = () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([result]));
+  a.download = "targets.mind";
+  a.click();
+};
+
+// 로컬 테스트 서버(serve.ps1)로 열었을 때만 바로 저장 가능
+const local = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+$("saveBtn").hidden = !local;
+$("saveBtn").onclick = async () => {
+  const r = await fetch("/__save?path=assets/targets.mind", { method: "POST", body: result });
+  msg(r.ok ? "assets/targets.mind 에 저장했습니다." : "저장 실패 — 내려받기를 이용하세요.", r.ok ? "ok" : "err");
+};
+</script>
+</body>
+</html>
