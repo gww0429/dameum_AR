@@ -6,7 +6,7 @@ export const HOME_BG_DEFAULT = '#FFFFFF';
 export const MAIN_DEFAULT = '#DE4A28';
 export const GUIDE_MAX = 40;
 export const SUCCESS_NOTE_MAX = 60;
-export const BUILTIN_TAG = 'v=3.9';
+export const BUILTIN_TAG = 'v=3.10';
 /* 홈 배경 프리셋 7종 (명세 C1, 순서 = 설정 칩 순서) */
 export const BG_PRESETS = [['aurora', '오로라'], ['aurora-light', '밝은 오로라'], ['pollen', '꽃가루'], ['stage', '무대 조명'], ['rings', '고리'], ['light', '빛'], ['dots', '점']];
 export const BG_TYPES = ['color', 'preset', 'blur'];
@@ -35,7 +35,7 @@ const pick = (src, keys) => {
   return o;
 };
 
-/* builtin/ 파일은 코드와 함께 배포되므로 코드와 같은 꼬리표(?v=3.9)를 붙여 읽는다. 다른 경로·이미 꼬리표가 있으면 그대로. */
+/* builtin/ 파일은 코드와 함께 배포되므로 코드와 같은 꼬리표(?v=3.10)를 붙여 읽는다. 다른 경로·이미 꼬리표가 있으면 그대로. */
 export function builtinUrl(p) {
   return typeof p === 'string' && p.startsWith('builtin/') && !p.includes('?') ? `${p}?${BUILTIN_TAG}` : p;
 }

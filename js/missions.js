@@ -1,8 +1,8 @@
 /* 미션 6종: tap · drag · hold · rotate · find · quiz (+ none)
    판정은 입력 이벤트와 performance.now() 경과 시간으로만 한다. 화면 위치 맞추기만 그리기 주기에 맡긴다. */
 import * as THREE from 'three';
-import * as haptics from './haptics.js?v=3.9';
-import { SPEED_PCT } from './config.js?v=3.9';
+import * as haptics from './haptics.js?v=3.10';
+import { SPEED_PCT } from './config.js?v=3.10';
 
 export const MISSION_TYPES = ['tap', 'drag', 'hold', 'rotate', 'find', 'quiz', 'none'];
 /* 드래그 목표 안전 영역(화면 높이 %): 설명·미션 카드는 최대 높이 45%라 위쪽 55%만 늘 보인다.

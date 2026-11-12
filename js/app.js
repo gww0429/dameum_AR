@@ -1,12 +1,12 @@
 /* dameum_AR 관람객 웹앱 v3: 화면 전환, 홈, AR 흐름, 성공 연출, 사은품·「미션 성공」 시트, 선물 상자, 직원 수령
    미리보기: ?preview=<포스터번호|home|box>  &reset=1 (미리보기 저장소 비움)  &embed=1 (설정 페이지 iframe, postMessage 로 설정 받음) */
-import { applyTheme, applyHomeTheme, PRESET_REP, avgBottom } from './theme.js?v=3.9';
-import { openBox, sha256Hex } from './storage.js?v=3.9';
-import * as haptics from './haptics.js?v=3.9';
-import { Stage } from './ar.js?v=3.9';
-import { createMission, missionGuide } from './missions.js?v=3.9';
-import { normalizeConfig, builtinUrl, GIFT_BOX_PATH } from './config.js?v=3.9';
-import { playEffect } from './effects.js?v=3.9';
+import { applyTheme, applyHomeTheme, PRESET_REP, avgBottom } from './theme.js?v=3.10';
+import { openBox, sha256Hex } from './storage.js?v=3.10';
+import * as haptics from './haptics.js?v=3.10';
+import { Stage } from './ar.js?v=3.10';
+import { createMission, missionGuide } from './missions.js?v=3.10';
+import { normalizeConfig, builtinUrl, GIFT_BOX_PATH } from './config.js?v=3.10';
+import { playEffect } from './effects.js?v=3.10';
 
 const $ = (id) => document.getElementById(id);
 /* 그림 칸의 <img>: 주소가 정해지는 렌더 시점에 처음 만든다(HTML 에 src 없는 img 를 두지 않는다) */

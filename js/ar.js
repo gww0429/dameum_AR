@@ -5,7 +5,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
-import { SPEED_PCT, builtinUrl } from './config.js?v=3.9';
+import { SPEED_PCT, builtinUrl } from './config.js?v=3.10';
 
 const reducedMotion = () => !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
 const easeInOut = (k) => (k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2);
@@ -97,13 +97,30 @@ function deviceQuat(out, alpha, beta, gamma, orient) {
 
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(), _m = new THREE.Matrix4();
 
+/* v3.10 카메라 해상도: MindAR 1.2.5 는 해상도를 지정하지 않고 카메라를 켜서 휴대폰이 기본 640×480 을 준다.
+   이 영상을 화면 전체로 늘리면 흐릿하므로, MindAR 가 카메라를 켜는 동안만 HD(1280×720)를 요청하게 덧붙인다.
+   기기가 못 주면 가능한 가장 가까운 값으로 열리고(ideal), 실패하면 원래 요청으로 다시 연다. */
+async function withHdCamera(fn) {
+  const md = navigator.mediaDevices;
+  if (!md || !md.getUserMedia) return fn();
+  const orig = md.getUserMedia.bind(md);
+  md.getUserMedia = async (c) => {
+    if (c && c.video && typeof c.video === 'object' && !c.video.width && !c.video.height) {
+      try { return await orig({ ...c, video: { ...c.video, width: { ideal: 1280 }, height: { ideal: 720 } } }); }
+      catch (e) { if (e && /NotAllowed|Security/i.test(e.name || '')) throw e; }
+    }
+    return orig(c);
+  };
+  try { return await fn(); } finally { md.getUserMedia = orig; }
+}
+
 export class Stage {
   constructor(container, hooks = {}) {
     this.el = container;
     this.hooks = hooks;
     this.mode = null;
     this.posters = [];
-    this.resolve = builtinUrl; // builtin/ 기본 모델은 코드 꼬리표(?v=3.9)를 붙여 읽는다
+    this.resolve = builtinUrl; // builtin/ 기본 모델은 코드 꼬리표(?v=3.10)를 붙여 읽는다
     this.cur = null;
     this.float = null;   // 떠다님(명세 C5): { phase:'trans'|'float', … } — 화면 기준 위치(px)
     this.fx = null;      // 성공 연출 중 3D 크기·투명도
@@ -221,7 +238,7 @@ export class Stage {
       return a;
     });
     window.addEventListener('deviceorientation', this._onOrient);
-    await this.mindar.start();
+    await withHdCamera(() => this.mindar.start()); // v3.10: 카메라 HD 요청
     this.running = true;
     renderer.setAnimationLoop(() => this._frame());
   }
@@ -233,7 +250,7 @@ export class Stage {
   async resumeAR() {
     if (!this.mindar || this.running) return;
     this.captured = null; this.blend = null;
-    await this.mindar.start();
+    await withHdCamera(() => this.mindar.start()); // v3.10: 카메라 HD 요청
     this.running = true;
     this.renderer.setAnimationLoop(() => this._frame());
   }
