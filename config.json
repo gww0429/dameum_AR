@@ -1,22 +1,59 @@
 {
-  "schema": 2,
+  "schema": 3,
   "projectId": "evt-20261111-ulhjrt",
   "projectName": "",
   "home": {
     "background": "#04032D",
-    "image": "assets/brand/home.png",
-    "mainColor": "#38149C",
-    "startLabel": "포스터 인식하기"
+    "bgType": "blur",
+    "bgPreset": "",
+    "image": "assets/brand/home.webp",
+    "mainColor": "#2C322B",
+    "startLabel": "포스터 인식"
   },
   "mindFile": "assets/targets.mind",
   "posters": [
     {
       "id": "pr27xys",
-      "name": "라우더 댄 밤즈",
+      "name": "천공의 성 라퓨타",
       "image": "assets/posters/poster-pr27xys.jpg",
+      "model": "assets/models/model-pr27xys.glb",
+      "placement": "front",
+      "scale": 0.7,
+      "position": [
+        0,
+        0,
+        0.35
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "animation": true,
+      "spin": true,
+      "mission": {
+        "type": "hold",
+        "seconds": 2,
+        "guide": "도망치는 성을 2초 이상 눌러보세요!",
+        "speed": 3
+      },
+      "gift": {
+        "enabled": true,
+        "image": "",
+        "title": "커피쿠폰",
+        "description": "축하드립니다! 미션 전체 성공 시 더 큰 선물이 기다리고 있어요",
+        "claimNote": "다믐 안내 직원에게 화면을 보여주세요"
+      },
+      "effect": "sparkle",
+      "successNote": ""
+    },
+    {
+      "id": "pi3frpm",
+      "name": "춘몽",
+      "image": "assets/posters/poster-pi3frpm.jpg",
       "model": null,
       "placement": "front",
-      "scale": 0.55,
+      "scale": 0.6,
       "position": [
         0,
         0,
@@ -28,31 +65,70 @@
         0
       ],
       "animation": false,
-      "spin": true,
+      "spin": false,
       "mission": {
-        "type": "hold",
-        "seconds": 2,
-        "guide": ""
+        "type": "tap",
+        "count": 5,
+        "guide": "도망가는 행성을 5번 터치하세요!",
+        "speed": 2
       },
       "gift": {
+        "enabled": true,
         "image": "",
-        "title": "선물",
-        "description": "",
-        "claimNote": ""
-      }
+        "title": "영화 포스터",
+        "description": "해당 영화 포스터를 선물로 드려요.",
+        "claimNote": "안내 직원에게 화면을 보여주세요."
+      },
+      "effect": "confetti",
+      "successNote": ""
+    },
+    {
+      "id": "pbi9fh1",
+      "name": "분노의 질주",
+      "image": "assets/posters/poster-pbi9fh1.jpg",
+      "model": "assets/models/model-pbi9fh1.glb",
+      "placement": "front",
+      "scale": 1.05,
+      "position": [
+        0,
+        0,
+        0.5
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "animation": false,
+      "spin": false,
+      "mission": {
+        "type": "find",
+        "count": 3,
+        "icon": "assets/gifts/icon-pbi9fh1-find.png",
+        "guide": "3D 이미지를 돌려 숨은 아이템 3개를 터치하세요!"
+      },
+      "gift": {
+        "enabled": true,
+        "image": "",
+        "title": "자동차 피규어",
+        "description": "멋진 피규어를 받아가세요!",
+        "claimNote": "안내 직원에게 화면을 보여주세요."
+      },
+      "effect": "burst",
+      "successNote": ""
     }
   ],
   "stampTour": {
     "enabled": true,
     "gift": {
       "image": "",
-      "title": "",
-      "description": "",
-      "claimNote": ""
+      "title": "아이폰 듀오",
+      "description": "멋지지만 쉽게 부서집니다.",
+      "claimNote": "안내 직원에게 화면을 보여주세요."
     }
   },
   "staff": {
     "codeHash": "bccea621f24c66dfa1994ea70ba86fc704652c6a5c8bd661847c6d947f5c6d50"
   },
-  "updatedAt": "2026-11-12T10:20:36+09:00"
+  "updatedAt": "2026-11-12T12:51:02+09:00"
 }
