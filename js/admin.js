@@ -2,14 +2,15 @@
    편집 중 내용은 이 PC 브라우저 IndexedDB(dameum_ar_admin)에 자동 저장한다. */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { derive, deriveHome, validHex, DEFAULT_MAIN, DEFAULT_HOME_BG, PRESET_REP, avgBottom } from './theme.js?v=3.4';
-import { sha256Hex, isoNow } from './storage.js?v=3.4';
-import { loadModel, deg, PLACEMENT_DEFAULT } from './ar.js?v=3.4';
-import { DRAG_SAFE, clampDragY, defaultGuide } from './missions.js?v=3.4';
-import { toGlb, MODEL_ACCEPT, MODEL_FMT_LABEL } from './convert.js?v=3.4';
-import { GitHub, gitBlobSha, loadSettings, saveSettings, clearSettings, validRepo, siteUrl, errorInfo } from './github.js?v=3.4';
-import { normalizeConfig, normalizeMission, GUIDE_MAX, SCHEMA, BG_PRESETS, EFFECTS, BUILTIN_MODELS, builtinModelPath, isBuiltin, builtinUrl, SUCCESS_NOTE_MAX } from './config.js?v=3.4';
-import { IMG_SPECS, SRC_MAX, decodeImage, openImageEditor } from './imageEditor.js?v=3.4';
+import { derive, deriveHome, validHex, DEFAULT_MAIN, DEFAULT_HOME_BG, PRESET_REP, avgBottom } from './theme.js?v=3.5';
+import { sha256Hex, isoNow } from './storage.js?v=3.5';
+import { loadModel, deg, PLACEMENT_DEFAULT } from './ar.js?v=3.5';
+import { DRAG_SAFE, clampDragY, defaultGuide } from './missions.js?v=3.5';
+import { toGlb, MODEL_ACCEPT, MODEL_FMT_LABEL } from './convert.js?v=3.5';
+import { compressGlb } from './compress.js?v=3.5';
+import { GitHub, gitBlobSha, loadSettings, saveSettings, clearSettings, validRepo, siteUrl, errorInfo } from './github.js?v=3.5';
+import { normalizeConfig, normalizeMission, GUIDE_MAX, SCHEMA, BG_PRESETS, EFFECTS, BUILTIN_MODELS, builtinModelPath, isBuiltin, builtinUrl, SUCCESS_NOTE_MAX } from './config.js?v=3.5';
+import { IMG_SPECS, SRC_MAX, decodeImage, openImageEditor } from './imageEditor.js?v=3.5';
 
 /* ───────── 기본값 ───────── */
 const MB = 1024 * 1024;
@@ -225,7 +226,8 @@ async function putFile(path, blob, info = {}) {
   if (A.urls.has(path)) { URL.revokeObjectURL(A.urls.get(path)); A.urls.delete(path); }
   A.blobs.set(path, blob);
   A.meta.files[path] = { name: info.name || path.split('/').pop(), size: blob.size, v: rid(4), anims: info.anims ?? null, failed: !!info.failed,
-    from: info.from || null, missing: info.missing && info.missing.length ? info.missing : null, w: info.w || null, h: info.h || null };
+    from: info.from || null, missing: info.missing && info.missing.length ? info.missing : null, w: info.w || null, h: info.h || null,
+    packed: info.packed || null }; // v3.5: { before, after } 또는 { skip: 이유 }
   await DB.put('files', path, blob);
 }
 async function dropFile(path) {
@@ -242,12 +244,25 @@ const isImg = (file) => /^image\/(png|jpeg|webp)$/.test(file.type) || /\.(png|jp
 const IMG_ACCEPT = 'image/png,image/jpeg,image/webp';
 const fmtOfPath = (p) => (/\.png$/i.test(p) ? 'PNG' : /\.webp$/i.test(p) ? 'WebP' : 'JPG');
 
+/* v3.5 모델 압축: Draco 로 줄이고, 줄인 파일이 실제로 다시 읽히는지 확인한 뒤에만 쓴다.
+   결과: { blob, packed: {before, after} | {skip: 이유} } */
+async function packModel(blob) {
+  let c;
+  try { c = await compressGlb(blob); } catch (e) { console.warn('모델 압축 실패:', e); return { blob, packed: { skip: '압축 실패' } }; }
+  if (!c.compressed) return { blob, packed: { skip: c.reason || '효과 작음' } };
+  const u = URL.createObjectURL(c.blob);
+  const m = await loadModel(u);
+  URL.revokeObjectURL(u);
+  if (m.failed) return { blob, packed: { skip: '압축본 확인 실패' } };
+  return { blob: c.blob, packed: { before: c.before, after: c.after } };
+}
+
 /* 파일 칸 (12-F-6) */
 function fileField({ path, kind = 'image', required, onFile, onClear, warn, error }) {
   const accept = kind === 'glb' ? MODEL_ACCEPT : IMG_ACCEPT;
   const picker = h('input', { type: 'file', accept, hidden: true, multiple: kind === 'glb' ? '' : null });
   const wrap = h('div');
-  let err = error || '', busy = false;
+  let err = error || '', busy = false, busyTxt = '';
   const take = async (list) => {
     const files = [...(list || [])];
     if (!files.length || busy) return;
@@ -256,7 +271,11 @@ function fileField({ path, kind = 'image', required, onFile, onClear, warn, erro
       busy = true; err = ''; draw();
       let res;
       try { res = await toGlb(files); } catch (e) { busy = false; err = (e && e.message) || '3D 모델을 읽지 못했습니다'; draw(); return; }
-      busy = false;
+      // v3.5: 도형을 Draco로 압축해 관람객 로딩을 빠르게 한다(다시 읽히는지 확인하고, 안 되면 원본 유지)
+      busyTxt = '용량을 줄이는 중…'; draw();
+      const pk = await packModel(res.blob);
+      res = { ...res, blob: pk.blob, packed: pk.packed };
+      busy = false; busyTxt = '';
       if (res.blob.size > FILE_MAX) {
         err = `${res.converted ? `${res.from}에서 변환한 GLB가 ` : ''}${sizeTxt(res.blob.size)} — 50MB를 넘는 파일은 저장소에 올릴 수 없습니다`; draw(); return;
       }
@@ -270,19 +289,36 @@ function fileField({ path, kind = 'image', required, onFile, onClear, warn, erro
     await onFile(file);
   };
   picker.addEventListener('change', () => { take(picker.files); picker.value = ''; });
+  const packExisting = async () => {
+    if (busy || !path) return;
+    busy = true; busyTxt = '용량을 줄이는 중…'; err = ''; draw();
+    let src = A.blobs.get(path);
+    try { if (!src) src = await (await fetch(urlOf(path))).blob(); } catch (_) { src = null; }
+    if (!src) { busy = false; busyTxt = ''; err = '모델 파일을 읽지 못했습니다'; draw(); return; }
+    const pk = await packModel(src);
+    busy = false; busyTxt = '';
+    const meta = A.meta.files[path] || {};
+    await onFile(pk.blob, { name: meta.name, from: meta.from, converted: !!meta.from, missing: meta.missing || [], packed: pk.packed });
+    if (pk.packed && pk.packed.skip) toast(`더 줄일 수 없는 모델입니다 (${pk.packed.skip})`);
+  };
   const draw = () => {
     wrap.innerHTML = '';
     const meta = path ? A.meta.files[path] : null;
     if (busy) {
-      wrap.append(h('div', { class: 'drop', 'aria-busy': 'true' }, h('span', { class: 'spin14' }), 'GLB로 변환하는 중…'));
+      wrap.append(h('div', { class: 'drop', 'aria-busy': 'true' }, h('span', { class: 'spin14' }), busyTxt || 'GLB로 변환하는 중…'));
     } else if (path && (meta || A.blobs.has(path))) {
       const name = (meta && meta.name) || path.split('/').pop();
       const size = meta ? meta.size : (A.blobs.get(path) || {}).size || 0;
-      const extra = (kind === 'glb' && meta && meta.from ? ` · ${meta.from}에서 GLB로 변환` : '') +
+      const pkd = kind === 'glb' && meta && meta.packed && meta.packed.after;
+      const extra = (pkd ? ` · 압축됨(${sizeTxt(meta.packed.before)}에서 줄임)` : '') +
+        (kind === 'glb' && meta && meta.from ? ` · ${meta.from}에서 GLB로 변환` : '') +
         (kind === 'glb' && meta && meta.anims != null ? (meta.anims ? ` · 애니메이션 ${meta.anims}개` : '') : '');
+      // v3.5: 압축 전에 올린 모델은 「용량 줄이기」로 한 번에 압축한다(시도해서 효과가 없었으면 버튼을 숨김)
+      const canPack = kind === 'glb' && meta && !meta.packed && !meta.failed && size > 300 * 1024;
       wrap.append(h('div', { class: 'file' },
         h('span', { class: 'ft' }, kind === 'glb' ? 'GLB' : h('img', { alt: '', src: urlOf(path) })),
         h('div', { class: 'nm' }, h('div', { class: 'n ell', title: name }, name), h('div', { class: 'sz' }, sizeTxt(size) + extra)),
+        canPack ? btn('용량 줄이기', () => packExisting(), { kind: 'ghost', size: 'sm' }) : null,
         btn('바꾸기', () => picker.click(), { kind: 'ghost', size: 'sm' }),
         required ? null : btn('지우기', () => onClear && onClear(), { kind: 'ghost', size: 'sm' })));
       if (!err && kind === 'glb' && size > GLB_WARN) wrap.append(help('15MB를 넘어 관람객 로딩이 느려질 수 있습니다.', 'warn'));
@@ -826,7 +862,7 @@ function tabBasic(p, form) {
         const m = await loadModel(u);
         URL.revokeObjectURL(u);
         await putFile(np, file, { name: res.name || file.name, from: res.converted ? res.from : null, missing: res.missing,
-          anims: m.failed ? 0 : m.clips.length, failed: m.failed });
+          anims: m.failed ? 0 : m.clips.length, failed: m.failed, packed: res.packed });
         p.model = np;
         if (!m.clips.length) p.animation = false;
         changed(); render();

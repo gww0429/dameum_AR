@@ -1,7 +1,7 @@
 /* 미션 성공 연출 3종 (명세 C3, 디자인 지침 D3-4) — 카메라 위 2D 캔버스 1장에 코드로 그린다(외부 이미지·라이브러리 없음).
    3D 자체의 크기·투명도는 onModel(k, a) 로 넘겨 AR 무대가 그린다.
    끝나는 시점은 그리기(rAF)와 별개로 타이머로도 보장한다(앱 전환·화면 꺼짐 = 연출을 끝낸 것으로 봄). */
-import { fxPalette } from './theme.js?v=3.4';
+import { fxPalette } from './theme.js?v=3.5';
 
 export const FX_DUR = { burst: 800, confetti: 1400, sparkle: 900 };
 const REDUCED_DUR = 150;
