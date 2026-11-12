@@ -94,6 +94,16 @@ export class GitHub {
     return { upload, remove };
   }
 
+  /* v3.7: 파일 하나만 커밋(다른 파일은 그대로) — 암호화한 접근 키 보관용 */
+  async putOne(path, blob, message) {
+    const h = await this.head();
+    const sha = await this.createBlob(blob);
+    const tree = await this.createTree(h.treeSha, [{ path, mode: '100644', type: 'blob', sha }]);
+    const commit = await this.createCommit(message, tree, h.commitSha);
+    await this.updateRef(commit);
+    return commit;
+  }
+
   /* 발행: onProgress(0~1) */
   async publish(local, message, cleanPrefixes, keepPaths, onProgress = () => {}) {
     const h = await this.head();

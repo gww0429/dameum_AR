@@ -2,15 +2,16 @@
    편집 중 내용은 이 PC 브라우저 IndexedDB(dameum_ar_admin)에 자동 저장한다. */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { derive, deriveHome, validHex, DEFAULT_MAIN, DEFAULT_HOME_BG, PRESET_REP, avgBottom } from './theme.js?v=3.6';
-import { sha256Hex, isoNow } from './storage.js?v=3.6';
-import { loadModel, deg, PLACEMENT_DEFAULT } from './ar.js?v=3.6';
-import { DRAG_SAFE, clampDragY, defaultGuide } from './missions.js?v=3.6';
-import { toGlb, MODEL_ACCEPT, MODEL_FMT_LABEL } from './convert.js?v=3.6';
-import { compressGlb } from './compress.js?v=3.6';
-import { GitHub, gitBlobSha, loadSettings, saveSettings, clearSettings, validRepo, siteUrl, errorInfo } from './github.js?v=3.6';
-import { normalizeConfig, normalizeMission, GUIDE_MAX, SCHEMA, BG_PRESETS, EFFECTS, BUILTIN_MODELS, builtinModelPath, isBuiltin, builtinUrl, SUCCESS_NOTE_MAX } from './config.js?v=3.6';
-import { IMG_SPECS, SRC_MAX, decodeImage, openImageEditor } from './imageEditor.js?v=3.6';
+import { derive, deriveHome, validHex, DEFAULT_MAIN, DEFAULT_HOME_BG, PRESET_REP, avgBottom } from './theme.js?v=3.7';
+import { sha256Hex, isoNow } from './storage.js?v=3.7';
+import { loadModel, deg, PLACEMENT_DEFAULT } from './ar.js?v=3.7';
+import { DRAG_SAFE, clampDragY, defaultGuide } from './missions.js?v=3.7';
+import { toGlb, MODEL_ACCEPT, MODEL_FMT_LABEL } from './convert.js?v=3.7';
+import { compressGlb } from './compress.js?v=3.7';
+import { GitHub, gitBlobSha, loadSettings, saveSettings, clearSettings, validRepo, siteUrl, errorInfo } from './github.js?v=3.7';
+import { verifyPassword, seal, unseal, fetchVault, VAULT_PATH } from './vault.js?v=3.7';
+import { normalizeConfig, normalizeMission, GUIDE_MAX, SCHEMA, BG_PRESETS, EFFECTS, BUILTIN_MODELS, builtinModelPath, isBuiltin, builtinUrl, SUCCESS_NOTE_MAX } from './config.js?v=3.7';
+import { IMG_SPECS, SRC_MAX, decodeImage, openImageEditor } from './imageEditor.js?v=3.7';
 
 /* ───────── 기본값 ───────── */
 const MB = 1024 * 1024;
@@ -95,7 +96,7 @@ const stripExt = (p) => String(p || '').replace(/\.[a-z0-9]+$/i, '');
 /* ───────── 상태 ───────── */
 const A = {
   cfg: blankConfig(), meta: blankMeta(), blobs: new Map(), urls: new Map(),
-  view: 'home', pid: null, tab: 'basic', pvUser: null, gh: loadSettings(),
+  view: 'home', pid: null, tab: 'basic', pvUser: null, gh: loadSettings(), unlocked: false, pw: '', // v3.7 발행 설정 잠금
   busy: false, savedAt: null, err: {}, ghResult: null, staffEdit: false, progress: null, ready: false
 };
 window.__admin = { A };
@@ -455,7 +456,6 @@ function projName() { return (A.cfg.projectName || '').trim() || '새 프로젝�
 function renderHeader() {
   const hd = $('hdr');
   const st = pubState();
-  const site = A.meta.publishedAt && validRepo(A.gh.repo) && !A.busy ? siteUrl(A.gh.repo) : '';
   hd.replaceChildren(
     h('span', { class: 'prod' }, 'dameum AR 설정'), h('span', { class: 'vline' }),
     h('span', { class: 'proj ell', title: projName() }, projName()),
@@ -463,9 +463,8 @@ function renderHeader() {
       A.savedAt ? h('span', { class: 'meta num' }, '자동 저장 ' + hm(A.savedAt)) : null,
       h('span', { class: 'gap3' }),
       st ? statusEl(st[0], st[1]) : null,
-      site && st && st[0] === 'success' ? h('a', { class: 'extlink', href: site, target: '_blank', rel: 'noopener' }, '사이트 열기', icon('ext', 'i i14')) : null,
+      // v3.7: 열 때 사이트 설정을 자동으로 가져오므로 「사이트에서 불러오기」·「사이트 열기」는 없앰
       h('span', { class: 'gap3' }),
-      btn('사이트에서 불러오기', () => loadFromSite(), { dis: A.busy, id: 'btnLoad' }),
       iconBtn('more', (e) => menu([
         { label: '새 프로젝트', onClick: () => newProject(), dis: A.busy },
         { label: '인식 파일 만들기', onClick: () => compileMind(), dis: A.busy || !A.cfg.posters.length }
@@ -1247,8 +1246,64 @@ function viewStaff(ph, host) {
 }
 
 /* ───────── A5 발행 설정 ───────── */
+/* v3.7 잠금 해제: 비밀번호가 맞으면 이번 페이지 동안 열어 두고, 이 PC에 접근 키가 없으면 저장소에 보관된 암호화 키를 풀어 쓴다 */
+async function tryUnlock(pw) {
+  if (!(await verifyPassword(pw))) return false;
+  A.unlocked = true; A.pw = pw;
+  if (!A.gh.token) {
+    const v = await fetchVault();
+    if (v) { try { A.gh = await unseal(pw, v); saveSettings(A.gh); } catch (e) { console.warn('보관된 접근 키를 풀지 못했습니다', e); } }
+  }
+  return true;
+}
+function askPassword({ title = '비밀번호를 입력해 주세요', msg = '발행 설정은 비밀번호를 넣어야 열립니다.' } = {}) {
+  return new Promise((resolve) => {
+    const wrap = h('div', { class: 'mscrim top' });
+    const close = (v) => { wrap.remove(); document.removeEventListener('keydown', esc); resolve(v); };
+    const esc = (e) => { if (e.key === 'Escape') close(false); };
+    const err = h('div');
+    const pwIn = input('', () => { err.replaceChildren(); }, { type: 'password', ph: '비밀번호' });
+    const ok = btn('확인', async () => {
+      ok.disabled = true; ok.replaceChildren(h('span', { class: 'spin14' }), '확인 중…');
+      const good = await tryUnlock(pwIn.value);
+      if (good) { close(true); return; }
+      ok.disabled = false; ok.replaceChildren('확인'); err.replaceChildren(help('비밀번호가 맞지 않습니다', 'error')); pwIn.select();
+    }, { kind: 'primary' });
+    pwIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') ok.click(); });
+    wrap.appendChild(h('div', { class: 'confirm', role: 'dialog', 'aria-modal': 'true' },
+      h('h2', { class: 'f-lg' }, title), h('p', { class: 'msg' }, msg), pwIn, err,
+      h('div', { class: 'bt' }, btn('취소', () => close(false)), ok)));
+    document.body.appendChild(wrap);
+    document.addEventListener('keydown', esc);
+    pwIn.focus();
+  });
+}
+/* 접근 키를 비밀번호로 암호화해 저장소에 보관(이미 같은 값이면 건너뜀) */
+async function storeVault() {
+  if (!A.pw || !A.gh.token || !validRepo(A.gh.repo)) return 'skip';
+  const cur = await fetchVault();
+  if (cur) { try { const s = await unseal(A.pw, cur); if (s.token === A.gh.token && s.repo === A.gh.repo && s.branch === (A.gh.branch || 'main')) return 'same'; } catch (_) {} }
+  const v = await seal(A.pw, A.gh);
+  await new GitHub(A.gh).putOne(VAULT_PATH, new Blob([JSON.stringify(v, null, 2) + '\n'], { type: 'application/json' }), 'dameum_AR 발행 키 보관(암호화)');
+  return 'saved';
+}
+
 function viewGithub(ph, host) {
   pageHeader(ph, '발행 설정');
+  if (!A.unlocked) { // v3.7: 비밀번호 잠금
+    const err = h('div');
+    const pwIn = input('', () => err.replaceChildren(), { type: 'password', ph: '비밀번호' });
+    const go_ = btn('잠금 풀기', async () => {
+      go_.disabled = true; go_.replaceChildren(h('span', { class: 'spin14' }), '확인 중…');
+      if (await tryUnlock(pwIn.value)) { render(); return; }
+      go_.disabled = false; go_.replaceChildren('잠금 풀기'); err.replaceChildren(help('비밀번호가 맞지 않습니다', 'error')); pwIn.select();
+    }, { kind: 'primary' });
+    pwIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') go_.click(); });
+    host.append(h('div', { class: 'form880' }, section('잠겨 있습니다', { desc: '발행 설정은 비밀번호를 넣어야 열립니다.' },
+      h('div', { class: 'box' }, settingRow('비밀번호', null, h('div', null, h('div', { class: 'inline' }, pwIn, go_), err))))));
+    setTimeout(() => pwIn.focus(), 0);
+    return;
+  }
   const g = A.gh;
   const wrap = h('div', { class: 'form880' });
   const saveGh = () => { saveSettings(A.gh); A.ghResult = null; resBox.replaceChildren(); };
@@ -1263,20 +1318,23 @@ function viewGithub(ph, host) {
     b.disabled = true; b.replaceChildren(h('span', { class: 'spin14' }), '확인 중…');
     try {
       await new GitHub(g).check();
-      A.ghResult = { ok: true, msg: `연결됐습니다 · ${g.repo} · ${g.branch || 'main'}` };
+      let shared = '';
+      try { const r = await storeVault(); shared = r === 'saved' ? ' · 다른 PC에서도 비밀번호만으로 발행할 수 있게 보관했습니다' : r === 'same' ? ' · 다른 PC에서도 비밀번호만으로 발행할 수 있습니다' : ''; }
+      catch (e) { console.warn(e); shared = ' · 다른 PC용 키 보관은 실패했습니다'; }
+      A.ghResult = { ok: true, msg: `연결됐습니다 · ${g.repo} · ${g.branch || 'main'}${shared}` };
     } catch (err) {
       const info = errorInfo(err);
       A.ghResult = { ok: false, msg: info.title };
     }
     render();
   };
-  wrap.append(section('GitHub 연결', { desc: '이 PC 브라우저에만 저장됩니다.', right: btn('연결 확인', check, { size: 'sm' }) },
+  wrap.append(section('GitHub 연결', { desc: '「연결 확인」을 누르면 접근 키를 비밀번호로 암호화해 보관합니다. 다른 PC에서는 비밀번호만 넣으면 됩니다.', right: btn('연결 확인', check, { size: 'sm' }) },
     h('div', { class: 'box' },
       settingRow('접근 키 (토큰)', '저장소 Contents 읽기·쓰기 권한이 있는 fine-grained 토큰', h('div', null, tok, A.err.gh && !g.token ? help('접근 키를 입력해 주세요', 'error') : null)),
       settingRow('저장소', 'owner/repo 형식', h('div', null, repo, A.err.gh && !validRepo(g.repo) ? help('owner/repo 형식으로 입력해 주세요', 'error') : null)),
       settingRow('브랜치', '기본 main', br)),
     resBox));
-  wrap.append(section('위험 영역', { box: true }, settingRow('키 지우기', '이 PC에 저장된 토큰·저장소·브랜치를 지웁니다. 행사 데이터는 지우지 않습니다.',
+  wrap.append(section('위험 영역', { box: true }, settingRow('키 지우기', '이 PC에 저장된 토큰·저장소·브랜치를 지웁니다. 저장소에 보관된 암호화 키와 행사 데이터는 그대로입니다.',
     btn('키 지우기', () => askConfirm({
       title: '키를 지울까요?', msg: '이 PC에 저장된 GitHub 접근 키와 저장소 정보가 지워집니다.', ok: '지우기', tone: 'danger',
       onOk: () => { clearSettings(); A.gh = loadSettings(); A.ghResult = null; toast('키를 지웠습니다'); render(); }
@@ -1366,11 +1424,11 @@ function hasEdits() {
   return c.posters.length > 0 || !!(hm_.image || hm_.startLabel) || (hm_.background || DEFAULT_HOME_BG).toUpperCase() !== DEFAULT_HOME_BG || (hm_.bgType || 'color') !== 'color' ||
     !!(c.staff && c.staff.codeHash) || !!(c.stampTour && c.stampTour.enabled) || (hm_.mainColor || DEFAULT_MAIN).toUpperCase() !== DEFAULT_MAIN;
 }
-function loadFromSite() {
+function loadFromSite({ auto = false } = {}) {
   const run = async () => {
     A.busy = true; renderHeader();
     try {
-      const useGh = !!(A.gh.token && validRepo(A.gh.repo));
+      const useGh = !auto && !!(A.gh.token && validRepo(A.gh.repo));
       let cfg, files = new Map();
       if (useGh) {
         const gh = new GitHub(A.gh);
@@ -1401,7 +1459,7 @@ function loadFromSite() {
       A.meta.publishedAt = cfg.updatedAt || '';
       await saveNow();
       A.busy = false;
-      toast(useGh ? '저장소에서 설정을 불러왔습니다' : '사이트에서 설정을 불러왔습니다');
+      toast(auto ? '발행된 최신 설정을 불러왔습니다' : useGh ? '저장소에서 설정을 불러왔습니다' : '사이트에서 설정을 불러왔습니다');
       go('home');
       loadIframe();
       autoPackModels(); // v3.6: 불러온 모델 중 압축 안 된 것 자동 압축
@@ -1412,8 +1470,31 @@ function loadFromSite() {
       askConfirm({ title: info.title, msg: info.msg, ok: info.retry ? '다시 시도' : '확인', noCancel: !info.retry, onOk: info.retry ? run : null });
     }
   };
-  if (hasEdits()) askConfirm({ title: '사이트에서 불러올까요?', msg: '편집 중인 내용을 사이트 설정으로 덮어씁니다.', ok: '불러오기', onOk: run });
-  else run();
+  if (!auto && hasEdits()) askConfirm({ title: '사이트에서 불러올까요?', msg: '편집 중인 내용을 사이트 설정으로 덮어씁니다.', ok: '불러오기', onOk: run });
+  else return run();
+}
+
+/* v3.7 열 때 자동 동기화: 발행된 설정이 이 PC 것보다 새것이면 가져온다.
+   이 PC에 발행 안 한 수정이 있을 때만 어느 쪽을 쓸지 묻는다(말없이 덮어쓰지 않음). */
+async function autoSync() {
+  let cfg;
+  try { const r = await fetch('config.json?t=' + Date.now(), { cache: 'no-store' }); if (!r.ok) return; cfg = await r.json(); } catch (_) { return; }
+  if (!cfg || !Array.isArray(cfg.posters) || !cfg.home) return;
+  const siteAt = Date.parse(cfg.updatedAt || '') || 0;
+  const localAt = Date.parse(A.meta.publishedAt || '') || 0;
+  const empty = !hasEdits();
+  const unpublished = !empty && sig() !== A.meta.publishedSig;
+  const sameProject = cfg.projectId && cfg.projectId === A.cfg.projectId;
+  if (empty) { if (cfg.posters.length || siteAt) await loadFromSite({ auto: true }); return; }
+  if (sameProject && siteAt <= localAt) return; // 이 PC 것이 최신
+  if (!siteAt && sameProject) return;
+  if (!unpublished) { await loadFromSite({ auto: true }); return; }
+  askConfirm({
+    title: '다른 곳에서 발행한 새 설정이 있습니다',
+    msg: '이 PC에는 아직 발행하지 않은 수정이 있습니다. 사이트 설정을 불러오면 이 PC의 발행 안 한 수정은 사라집니다.',
+    ok: '사이트 설정 불러오기', cancel: '이 PC 수정 유지',
+    onOk: () => loadFromSite({ auto: true })
+  });
 }
 
 /* ───────── 발행 ───────── */
@@ -1439,6 +1520,12 @@ async function buildLocalFiles() {
 }
 async function publish() {
   if (A.busy) return;
+  // v3.7: 이 PC에 접근 키가 없으면 비밀번호 한 번으로 보관된 키를 풀어 쓴다
+  if (!A.gh.token && !A.unlocked) {
+    const ok = await askPassword({ title: '발행 비밀번호', msg: '처음 발행하는 PC입니다. 발행 설정 비밀번호를 넣으면 보관된 접근 키로 바로 발행합니다.' });
+    if (!ok) return;
+    renderHeader();
+  }
   if (!validate()) return;
   A.busy = true; A.progress = 0; renderHeader();
   const done = (ok) => { A.busy = false; A.progress = null; renderHeader(); return ok; };
@@ -1460,8 +1547,7 @@ async function publish() {
     A.meta.publishedAt = new Date().toISOString();
     await saveNow();
     done(true);
-    const site = siteUrl(A.gh.repo);
-    toast('발행했습니다. 사이트 반영까지 1~3분 걸립니다', { link: site ? { href: site, label: '사이트 열기' } : null });
+    toast('발행했습니다. 사이트 반영까지 1~3분 걸립니다');
   } catch (err) {
     console.warn(err);
     done(false);
@@ -1530,9 +1616,10 @@ async function boot() {
     if (DB.db) await saveNow();
   }
   A.ready = true;
-  A.view = A.gh.token ? 'home' : 'github';
+  A.view = 'home'; // v3.7: 접근 키가 없어도 홈부터(발행 때 비밀번호로 보관된 키를 씀)
   render();
   loadIframe();
+  await autoSync(); // v3.7: 다른 PC에서도 발행된 설정을 바로 가져온다
   autoPackModels(); // v3.6: 예전에 올린 모델도 열자마자 자동으로 압축
 }
 boot();
