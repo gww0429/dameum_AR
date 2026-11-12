@@ -5,7 +5,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
-import { SPEED_PCT, builtinUrl } from './config.js?v=3.3';
+import { SPEED_PCT, builtinUrl } from './config.js?v=3.4';
 
 const reducedMotion = () => !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
 const easeInOut = (k) => (k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2);
@@ -103,7 +103,7 @@ export class Stage {
     this.hooks = hooks;
     this.mode = null;
     this.posters = [];
-    this.resolve = builtinUrl; // builtin/ 기본 모델은 코드 꼬리표(?v=3.3)를 붙여 읽는다
+    this.resolve = builtinUrl; // builtin/ 기본 모델은 코드 꼬리표(?v=3.4)를 붙여 읽는다
     this.cur = null;
     this.float = null;   // 떠다님(명세 C5): { phase:'trans'|'float', … } — 화면 기준 위치(px)
     this.fx = null;      // 성공 연출 중 3D 크기·투명도
@@ -299,6 +299,8 @@ export class Stage {
 
   _trackedPose() {
     if (this.mode === 'preview') return this.previewAnchor;
+    // v3.4: 첫 인식 때 setPoster → endFx → renderNow 가 this.cur 를 정하기 전에 불려 여기서 멈추던 문제(실제 카메라에서만 발생)
+    if (!this.cur) return null;
     const a = this.anchors && this.anchors[this.cur.index];
     return a && a.visible ? a.group.matrix : null;
   }
