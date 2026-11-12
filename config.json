@@ -1,43 +1,120 @@
 {
-  "schema": 1,
-  "projectId": "evt-20261111-d4m7q2",
-  "projectName": "dameum AR 데모",
+  "schema": 2,
+  "projectId": "evt-20261111-ulhjrt",
+  "projectName": "",
   "home": {
-    "logo": "",
-    "title": "포스터를 찾아 3D를 깨워 보세요",
-    "intro": "전시장 곳곳의 포스터를 비추면 3D가 나타납니다.",
-    "heroImage": "",
-    "mainColor": "#DE4A28",
-    "startLabel": "AR 시작하기",
-    "showPosterList": true
+    "background": "#04032D",
+    "image": "assets/brand/home.png",
+    "mainColor": "#38149C",
+    "startLabel": "포스터 인식하기"
   },
   "mindFile": "assets/targets.mind",
   "posters": [
     {
-      "id": "pa1b2c",
-      "name": "포스터 01",
-      "image": "assets/posters/poster-pa1b2c.png",
+      "id": "pr27xys",
+      "name": "라우더 댄 밤즈",
+      "image": "assets/posters/poster-pr27xys.jpg",
+      "model": null,
+      "placement": "front",
+      "scale": 0.55,
+      "position": [
+        0,
+        0,
+        0.35
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "animation": false,
+      "spin": true,
+      "mission": {
+        "type": "hold",
+        "seconds": 2,
+        "guide": ""
+      },
+      "gift": {
+        "image": "",
+        "title": "선물",
+        "description": "",
+        "claimNote": ""
+      }
+    },
+    {
+      "id": "pm5ob4i",
+      "name": "이터너티",
+      "image": "assets/posters/poster-pm5ob4i.jpg",
       "model": null,
       "placement": "front",
       "scale": 0.6,
-      "position": [0, 0.05, 0.35],
-      "rotation": [0, 0, 0],
+      "position": [
+        0,
+        0,
+        0.35
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
       "animation": false,
       "spin": false,
-      "description": "임시 포스터와 임시 3D 모델입니다. 설정 페이지에서 실제 포스터·모델로 바꿀 수 있습니다.",
-      "mission": { "type": "tap", "count": 5 },
+      "mission": {
+        "type": "tap",
+        "count": 5,
+        "guide": ""
+      },
       "gift": {
         "image": "",
-        "title": "스티커 1장",
+        "title": "",
         "description": "",
-        "claimNote": "안내 데스크에서 선물 상자를 보여 주세요"
+        "claimNote": ""
+      }
+    },
+    {
+      "id": "pffp274",
+      "name": "춘몽",
+      "image": "assets/posters/poster-pffp274.jpg",
+      "model": null,
+      "placement": "front",
+      "scale": 0.6,
+      "position": [
+        0,
+        0,
+        0.35
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "animation": false,
+      "spin": false,
+      "mission": {
+        "type": "tap",
+        "count": 5,
+        "guide": ""
+      },
+      "gift": {
+        "image": "",
+        "title": "",
+        "description": "",
+        "claimNote": ""
       }
     }
   ],
   "stampTour": {
     "enabled": true,
-    "gift": { "image": "", "title": "완주 기념품", "description": "", "claimNote": "안내 데스크에서 선물 상자를 보여 주세요" }
+    "gift": {
+      "image": "",
+      "title": "",
+      "description": "",
+      "claimNote": ""
+    }
   },
-  "staff": { "codeHash": "53be00119503ef0c6b2dffc880fae31f112d82159001cbe14dd4520652bac27e" },
-  "updatedAt": "2026-11-11T12:00:00+09:00"
+  "staff": {
+    "codeHash": "bccea621f24c66dfa1994ea70ba86fc704652c6a5c8bd661847c6d947f5c6d50"
+  },
+  "updatedAt": "2026-11-12T10:19:54+09:00"
 }
