@@ -5,6 +5,11 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { SPEED_PCT, builtinUrl } from './config.js?v=3.1';
+
+const reducedMotion = () => !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+const easeInOut = (k) => (k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2);
+const FLOAT_TRANS = 300, APPEAR_MS = 400, BACK_MS = 300;
 
 export const deg = (d) => d * Math.PI / 180;
 export const PLACEMENT_DEFAULT = { front: [0, 0, 0.35], floor: [0, -1.2, 0.6] };
@@ -98,8 +103,11 @@ export class Stage {
     this.hooks = hooks;
     this.mode = null;
     this.posters = [];
-    this.resolve = (u) => u;
+    this.resolve = builtinUrl; // builtin/ 기본 모델은 코드 꼬리표(?v=3.1)를 붙여 읽는다
     this.cur = null;
+    this.float = null;   // 떠다님(명세 C5): { phase:'trans'|'float', … } — 화면 기준 위치(px)
+    this.fx = null;      // 성공 연출 중 3D 크기·투명도
+    this.fxHidden = false;
     this.mixer = null;
     this.raycaster = new THREE.Raycaster();
     this.clock = new THREE.Clock();
@@ -245,7 +253,9 @@ export class Stage {
     const p = this.posters[i];
     const token = {};
     this._token = token;
+    this.endFx(false);
     this.cur = { index: i, poster: p, ready: false, appearAt: 0 };
+    this.float = null; this.fxHidden = false;
     this.captured = null; this.blend = null; this.dragOffset.set(0, 0, 0); this.drag = null;
     const { appear, rot, spin } = this.g;
     appear.clear(); rot.quaternion.identity(); spin.rotation.set(0, 0, 0);
@@ -274,8 +284,8 @@ export class Stage {
     this.captured = null;
     this.renderNow();
   }
-  refound() { // 같은 포스터를 다시 인식: 0.3초 보간으로 보정
-    if (!this.cur || !this.captured) return;
+  refound() { // 같은 포스터를 다시 인식: 0.3초 보간으로 보정 (떠다니는 중이면 화면 기준이라 보정하지 않는다)
+    if (!this.cur || !this.captured || this.float) return;
     const p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
     this.lastDisplay.decompose(p, q, s);
     this.blend = { at: performance.now(), p, q, s };
@@ -293,12 +303,170 @@ export class Stage {
     return a && a.visible ? a.group.matrix : null;
   }
 
+  /* ── 떠다님 (명세 C5, 지침 D3-3) ── */
+  floatSpeed() {
+    const m = this.cur && this.cur.poster && this.cur.poster.mission;
+    if (this.noGL || !m || (m.type !== 'tap' && m.type !== 'hold')) return 0;
+    return SPEED_PCT[Number(m.speed) || 0] || 0;
+  }
+  resetFloat() { // 앱 전환 후 돌아옴: 포스터 위치 등장부터 다시
+    this.float = null;
+    if (this.cur) this.cur.appearAt = performance.now();
+  }
+  _region() {
+    const r = this.hooks.region ? this.hooks.region() : null;
+    if (r) return r;
+    const b = this.el.getBoundingClientRect();
+    return { left: b.left, right: b.right, top: b.top + 60, bottom: b.bottom - 16 };
+  }
+  _pxPerUnit(D) {
+    const rect = this._rect();
+    return rect.height / (2 * D * Math.tan(deg(this.camera.fov / 2)));
+  }
+  /* 화면 px(x, y) → 카메라에서 깊이 D 인 점(월드 좌표) */
+  _screenPoint(x, y, D) {
+    const r = this._rect();
+    const v = new THREE.Vector3((x - r.left) / r.width * 2 - 1, -((y - r.top) / r.height) * 2 + 1, 0.5).applyMatrix4(this.camera.projectionMatrixInverse);
+    v.multiplyScalar(-D / v.z);
+    return v.applyMatrix4(this.camera.matrixWorld);
+  }
+  _startFloat(pose, now) {
+    const pos = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+    pose.decompose(pos, q, s);
+    this.camera.updateMatrixWorld();
+    const cam = pos.clone().applyMatrix4(this.camera.matrixWorldInverse);
+    const D = Math.max(0.05, -cam.z);
+    const c = this.toClient(pos);
+    const s0 = (this.cur.poster.scale ?? 0.6) * s.x;
+    this.float = { phase: 'trans', at: now, lastT: now, D, x0: c.x, y0: c.y, s0, q0: q, x: c.x, y: c.y, vx: 0, vy: 0, r: 0, back: null, frozen: false };
+  }
+  _bounds() {
+    const R = this._region(), W = Math.max(1, R.right - R.left);
+    let r = Math.min(W * 0.16, (R.bottom - R.top) / 2, W / 2), park = false;
+    if (r < W * 0.08) { r = W * 0.08; park = true; } // 영역이 너무 작으면 가운데에 멈춰 둔다(명세 §8)
+    return { W, r, park, minX: R.left + r, maxX: R.right - r, minY: R.top + r, maxY: Math.max(R.top + r, R.bottom - r), cx: (R.left + R.right) / 2, cy: (R.top + R.bottom) / 2 };
+  }
+  _updateFloat(now, sp) {
+    const g = this.g, f = this.float, p = this.cur.poster;
+    const B = this._bounds();
+    const clampX = (x) => Math.max(B.minX, Math.min(B.maxX, x)), clampY = (y) => Math.max(B.minY, Math.min(B.maxY, y));
+    const dt = Math.min(0.1, Math.max(0, (now - f.lastT) / 1000));
+    f.lastT = now;
+    const ppu = this._pxPerUnit(f.D);
+    const sFloat = 2 * B.r / ppu;
+    const qT = this.camera.getWorldQuaternion(new THREE.Quaternion()).multiply(this._placeLocal(p).q);
+    let scale = sFloat, q = qT;
+    if (f.phase === 'trans') {
+      const k = reducedMotion() ? 1 : Math.min(1, (now - f.at) / FLOAT_TRANS);
+      const e = easeInOut(k);
+      const tx = B.park ? B.cx : clampX(f.x0), ty = B.park ? B.cy : clampY(f.y0);
+      f.x = f.x0 + (tx - f.x0) * e; f.y = f.y0 + (ty - f.y0) * e;
+      scale = f.s0 + (sFloat - f.s0) * e;
+      q = f.q0.clone().slerp(qT, e);
+      if (k >= 1) {
+        f.phase = 'float';
+        const a = Math.random() * Math.PI * 2, v = sp * B.W;
+        f.vx = Math.cos(a) * v; f.vy = Math.sin(a) * v;
+      }
+    } else if (!f.frozen) {
+      const out = f.x < B.minX - 0.5 || f.x > B.maxX + 0.5 || f.y < B.minY - 0.5 || f.y > B.maxY + 0.5;
+      if (B.park) { f.x = B.cx; f.y = B.cy; f.back = null; }
+      else if (f.back || out) {
+        // 카드 접기·펴기로 영역이 바뀌어 밖에 있게 되면 300ms 에 걸쳐 안으로 들어온다(명세 §8)
+        if (!f.back) f.back = { fx: f.x, fy: f.y, at: now };
+        const k = reducedMotion() ? 1 : Math.min(1, (now - f.back.at) / BACK_MS);
+        f.x = f.back.fx + (clampX(f.back.fx) - f.back.fx) * k; f.y = f.back.fy + (clampY(f.back.fy) - f.back.fy) * k;
+        if (k >= 1) f.back = null;
+      } else {
+        const v = sp * B.W;
+        const sp0 = Math.hypot(f.vx, f.vy) || 1;
+        f.vx = f.vx / sp0 * v; f.vy = f.vy / sp0 * v;
+        f.x += f.vx * dt; f.y += f.vy * dt;
+        // 가장자리에서 반사 + 방향 ±15° 무작위(같은 궤도 반복 방지). 감속·이징 없음.
+        const turn = () => {
+          const a = Math.atan2(f.vy, f.vx) + (Math.random() - 0.5) * 2 * deg(15);
+          f.vx = Math.cos(a) * v; f.vy = Math.sin(a) * v;
+        };
+        if (f.x < B.minX) { f.x = Math.min(B.maxX, 2 * B.minX - f.x); f.vx = Math.abs(f.vx); turn(); f.vx = Math.abs(f.vx); }
+        else if (f.x > B.maxX) { f.x = Math.max(B.minX, 2 * B.maxX - f.x); f.vx = -Math.abs(f.vx); turn(); f.vx = -Math.abs(f.vx); }
+        if (f.y < B.minY) { f.y = Math.min(B.maxY, 2 * B.minY - f.y); f.vy = Math.abs(f.vy); turn(); f.vy = Math.abs(f.vy); }
+        else if (f.y > B.maxY) { f.y = Math.max(B.minY, 2 * B.maxY - f.y); f.vy = -Math.abs(f.vy); turn(); f.vy = -Math.abs(f.vy); }
+      }
+    }
+    f.r = scale * ppu / 2;
+    const pos = this._screenPoint(f.x, f.y, f.D);
+    const k = this.fx ? this.fx.k : 1;
+    g.root.matrix.compose(pos, q, new THREE.Vector3(1, 1, 1));
+    this.lastDisplay.copy(g.root.matrix);
+    g.root.visible = true;
+    g.appear.scale.setScalar(Math.max(0.0001, scale * k));
+    g.root.updateMatrixWorld(true);
+  }
+  /* 떠다니는 중(전환 포함)이면 화면상 테두리 원 {x, y, r}(client px), 아니면 null */
+  floatCircle() {
+    this.update();
+    return this.float ? { x: this.float.x, y: this.float.y, r: this.float.r } : null;
+  }
+  freezeFloat() { if (this.float) this.float.frozen = true; }
+  /* 포스터 인식 여부(상단 칩용): v2 의 3D 표시 조건과 같다 */
+  posterVisible() {
+    if (this.mode === 'preview') return true;
+    const a = this.anchors && this.cur && this.anchors[this.cur.index];
+    return !!((a && a.visible) || (this.captured && this.sensor.ok));
+  }
+  /* 3D 의 화면상 중심·테두리 반지름 (client px) — 성공 연출 원점 */
+  screenCircle() {
+    const fc = this.floatCircle();
+    if (fc) return fc;
+    if (!this.g || !this.g.root.visible) return null;
+    const c = this.toClient(this.g.root.getWorldPosition(new THREE.Vector3()));
+    if (this.noGL) return { x: c.x, y: c.y, r: this._rect().width * 0.16 };
+    const sph = new THREE.Box3().setFromObject(this.g.appear).getBoundingSphere(new THREE.Sphere());
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.getWorldQuaternion(new THREE.Quaternion()));
+    const e = this.toClient(sph.center.clone().add(right.multiplyScalar(sph.radius)));
+    const cc = this.toClient(sph.center);
+    return { x: cc.x, y: cc.y, r: Math.max(8, Math.hypot(e.x - cc.x, e.y - cc.y)) };
+  }
+
+  /* ── 성공 연출 중 3D 크기·투명도 (재질은 끝나면 원래대로 돌려놓는다: 모델은 캐시에서 다시 쓰이므로) ── */
+  beginFx() {
+    this.endFx(false);
+    if (!this.g) return;
+    const mats = [], seen = new Set();
+    this.g.appear.traverse((o) => {
+      if (!o.material) return;
+      (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => {
+        if (!m || seen.has(m)) return; seen.add(m);
+        mats.push({ m, t: m.transparent, o: m.opacity });
+        m.transparent = true; m.needsUpdate = true;
+      });
+    });
+    this.fx = { k: 1, a: 1, mats };
+    this.freezeFloat();
+  }
+  setFx(k, a) {
+    if (!this.fx) return;
+    this.fx.k = k; this.fx.a = a;
+    this.fx.mats.forEach((r) => { r.m.opacity = r.o * a; });
+    this.renderNow();
+  }
+  endFx(hide = true) {
+    if (hide) this.fxHidden = true;
+    if (this.fx) {
+      this.fx.mats.forEach((r) => { r.m.transparent = r.t; r.m.opacity = r.o; r.m.needsUpdate = true; });
+      this.fx = null;
+    }
+    if (this.g) this.renderNow();
+  }
+
   /* 시간 기준 상태 계산 — rAF 와 입력 처리 양쪽에서 부른다 */
   update(now = performance.now()) {
     const g = this.g;
     if (!g) return;
-    if (!this.cur || !this.cur.ready) { g.root.visible = false; return; }
+    if (!this.cur || !this.cur.ready || this.fxHidden) { g.root.visible = false; return; }
     const p = this.cur.poster;
+    const sp = this.floatSpeed();
+    if (sp && this.float) { this._updateFloat(now, sp); return; }
     const anchorM = this._trackedPose();
     let pose = null;
     if (anchorM) {
@@ -338,13 +506,15 @@ export class Stage {
     }
     if (!pose) { g.root.visible = false; return; }
     if (this.dragOffset.lengthSq()) pose = new THREE.Matrix4().makeTranslation(this.dragOffset.x, this.dragOffset.y, this.dragOffset.z).multiply(pose);
+    const reduce = reducedMotion();
+    // 떠다님: 포스터 위치 등장(400ms)이 끝나면 화면 기준으로 바꾼다(명세 C5 2번). 성공 연출이 이미 시작됐으면 바꾸지 않는다.
+    if (sp && !this.fx && (reduce || now - this.cur.appearAt >= APPEAR_MS)) { this._startFloat(pose, now); this._updateFloat(now, sp); return; }
     g.root.matrix.copy(pose);
     this.lastDisplay.copy(pose);
     g.root.visible = true;
-    const k = Math.min(1, (now - this.cur.appearAt) / 400);
-    const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const k = Math.min(1, (now - this.cur.appearAt) / APPEAR_MS);
     const e = reduce ? 1 : 1 - Math.pow(1 - k, 3);
-    g.appear.scale.setScalar((p.scale ?? 0.6) * (0.001 + e * 0.999));
+    g.appear.scale.setScalar((p.scale ?? 0.6) * (0.001 + e * 0.999) * (this.fx ? Math.max(0.0001, this.fx.k) : 1));
     g.root.updateMatrixWorld(true);
   }
 

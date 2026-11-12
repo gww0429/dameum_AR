@@ -1,12 +1,12 @@
-/* dameum_AR 관람객 웹앱 v2 — 디자인 규칙 AR1.3 (--a-* 토큰만 사용) */
+/* dameum_AR 관람객 웹앱 v3.1 — 디자인 규칙 AR1.5 (--a-* 토큰만 사용) */
 :root {
   --a-bg: #FFFFFF; --a-canvas: #F9FAFB; --a-fill: #F2F4F6; --a-line: #E5E8EB; --a-line-strong: #D1D6DB;
   --a-t-dis: #B0B8C1; --a-t3: #6B7684; --a-t2: #4E5968; --a-text: #191F28;
   --a-dk-bg: #111316; --a-dk-line: #33383E; --a-dk-line-strong: #454B53; --a-dk-press: #262A2F; --a-dk-t2: #B0B8C1; --a-dk-text: #F2F4F6;
-  --a-ov: rgba(17,19,22,.76); --a-ov-text: #FFFFFF; --a-ov-t2: #C9CDD2; --a-ov-track: rgba(255,255,255,.24);
+  --a-ov: rgba(17,19,22,.76); --a-ov-text: #FFFFFF; --a-ov-line: #FFFFFF; --a-ov-t2: #C9CDD2; --a-ov-track: rgba(255,255,255,.24);
   --a-halo: rgba(17,19,22,.56); --a-scrim: rgba(17,19,22,.40);
   --a-success: #067A4D; --a-danger: #C93B40; --a-success-dk: #2FB37A; --a-danger-dk: #F0646A;
-  --a-toast: #191F28;
+  --a-toast: #191F28; --a-toast-text: #FFFFFF;
   --a-main-solid: #D14626; --a-main-on: #FFFFFF; --a-main-text: #D14626; --a-main-line: #DE4A28; --a-main-ov: #E25E40;
   --a-main-subtle: #FCEDEA; --a-solid-bd-light: transparent; --a-solid-bd-dark: transparent;
   --a-home-bg: #FFFFFF; --a-home-text: #000000; --a-home-solid: #D14626; --a-home-on: #FFFFFF; --a-home-press: #B83E22;
@@ -25,6 +25,12 @@ body.cam-on { background: var(--a-dk-bg); }
 button, input { font: inherit; color: inherit; }
 button { background: none; border: 0; cursor: pointer; }
 [hidden] { display: none !important; }
+/* 키보드 포커스(AR1.5 3-7): 2px 외곽선, 표면마다 대비가 맞는 메인 색 파생값. 마우스·터치로 누를 때는 그리지 않는다(:focus-visible) */
+:focus-visible { outline: 2px solid var(--a-main-line); outline-offset: 2px; }
+.dark :focus-visible, #cam :focus-visible { outline-color: var(--a-main-ov); box-shadow: 0 0 0 5px var(--a-halo); } /* 어두운 화면·카메라 위: 후광으로 밝은 영상 위에서도 보이게 */
+#cam .sheet :focus-visible { outline-color: var(--a-main-line); box-shadow: none; }
+.homev :focus-visible { outline-color: var(--a-home-text); } /* 홈: 운영자 배경색 위라 홈 바탕 파생 글자색 */
+.opt:focus-visible, .ox .abtn:focus-visible, button.srow:focus-visible, .crow:focus-visible { outline-offset: -2px; } /* 폭 100% 행: 스크롤 칸에 잘리지 않게 안쪽 */
 svg.i { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 svg.i24 { width: 24px; height: 24px; }
 .num { font-variant-numeric: tabular-nums; }
@@ -115,6 +121,12 @@ body.home-on { background: var(--a-home-bg); }
 .hbar .row .primary { flex: 1; min-width: 0; background: var(--a-home-solid); color: var(--a-home-on); border-color: transparent; }
 .hbar .row .primary:active:not(:disabled) { background: var(--a-home-press); }
 .hbar .row .primary:disabled { background: var(--a-fill); color: var(--a-t-dis); }
+/* v3 홈 배경 그림(AR1.4 5-14, D3-1): ① 배경색(body) ② 그림(화면 전체 cover) ③ 홈 이미지 ④ 하단 바 */
+.hbg { position: fixed; inset: 0; z-index: 1; overflow: hidden; background: var(--a-home-bg); pointer-events: none; }
+body:not(.home-on) .hbg { display: none; }
+.hbg img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 50%; display: block; }
+.hbg img.blur { inset: -80px; width: calc(100% + 160px); height: calc(100% + 160px); filter: blur(40px); }
+body.bgimg .homev { background: transparent; }
 
 /* ── 카메라 칩 aChip ── */
 .chip { background: var(--a-ov); color: var(--a-ov-text); border-radius: var(--a-r); height: 36px; padding: 0 12px; display: inline-flex; align-items: center;
@@ -133,7 +145,7 @@ body.home-on { background: var(--a-home-bg); }
 .topbar .r { display: flex; gap: 8px; align-items: center; flex: none; }
 .notice { position: absolute; left: 0; right: 0; top: calc(60px + var(--safe-t)); display: flex; justify-content: center; z-index: 3; padding: 0 16px; }
 .frame { position: absolute; left: 50%; top: 42%; width: min(64vw, 280px); aspect-ratio: 1 / 1.4; transform: translate(-50%, -50%); filter: drop-shadow(0 0 1px var(--a-halo)); }
-.frame i { position: absolute; width: 24px; height: 24px; border: 0 solid #FFFFFF; }
+.frame i { position: absolute; width: 24px; height: 24px; border: 0 solid var(--a-ov-line); }
 .frame i.a { left: 0; top: 0; border-top-width: 3px; border-left-width: 3px; }
 .frame i.b { right: 0; top: 0; border-top-width: 3px; border-right-width: 3px; }
 .frame i.c { left: 0; bottom: 0; border-bottom-width: 3px; border-left-width: 3px; }
@@ -141,16 +153,18 @@ body.home-on { background: var(--a-home-bg); }
 .guide { position: absolute; left: 0; right: 0; top: calc(42% + min(64vw, 280px) * .7 + 16px); display: flex; justify-content: center; padding: 0 16px; }
 .mload { position: absolute; width: 40px; height: 40px; margin: -20px 0 0 -20px; border-radius: var(--a-r-full); background: var(--a-ov); display: flex; align-items: center; justify-content: center; z-index: 2; }
 #mlayer { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+/* 성공 연출 캔버스(D3-4): 미션 그래픽·카드 위, 덮개·시트 아래 */
+.fx { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
 
 /* 미션 그래픽 (5-5) */
 .gauge { position: absolute; width: 64px; height: 64px; border-radius: var(--a-r-full); background: var(--a-ov); display: flex; align-items: center; justify-content: center; }
 .gauge svg { position: absolute; inset: 0; transform: rotate(-90deg); }
 .gauge .v { position: relative; color: var(--a-ov-text); font-size: 14px; line-height: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.target { position: absolute; width: 72px; height: 72px; margin: -36px 0 0 -36px; border-radius: var(--a-r-full); background: var(--a-ov); border: 2px solid #FFFFFF;
+.target { position: absolute; width: 72px; height: 72px; margin: -36px 0 0 -36px; border-radius: var(--a-r-full); background: var(--a-ov); border: 2px solid var(--a-ov-line);
   box-shadow: 0 0 0 1px var(--a-halo); display: flex; align-items: center; justify-content: center; color: var(--a-ov-text); }
 .target.hit { border: 3px solid var(--a-main-ov); }
 .target img { width: 40px; height: 40px; object-fit: contain; }
-.marker { position: absolute; width: 40px; height: 40px; margin: -20px 0 0 -20px; border-radius: var(--a-r-full); border: 2px solid #FFFFFF;
+.marker { position: absolute; width: 40px; height: 40px; margin: -20px 0 0 -20px; border-radius: var(--a-r-full); border: 2px solid var(--a-ov-line);
   box-shadow: 0 0 0 1px var(--a-halo); background: var(--a-ov); display: flex; align-items: center; justify-content: center; color: var(--a-ov-text); pointer-events: auto; padding: 0; }
 .marker.ready { border: 3px solid var(--a-main-ov); }
 .marker img { width: 28px; height: 28px; object-fit: contain; pointer-events: none; }
@@ -210,6 +224,15 @@ body.home-on { background: var(--a-home-bg); }
 .gimg img { max-width: 100%; max-height: 100%; object-fit: contain; }
 .kv { display: flex; gap: 12px; font-size: 14px; line-height: 20px; margin-top: 12px; }
 .kv .k { width: 64px; flex: none; color: var(--a-t2); font-weight: 500; }
+#giftTitle { margin-top: 4px; }
+#giftOk { margin-top: 20px; flex: none; }
+/* 「미션 성공」 시트(D3-5): 제목 → 8 → 성공 안내 문구 → 24 → 확인 */
+.okonly #giftTitle { margin-top: 12px; }
+#giftNote { margin-top: 8px; overflow-wrap: anywhere; }
+.okonly #giftOk { margin-top: 24px; }
+/* V8 한 개 수령 머리줄(D3-8): 「선물」 + 사은품 제목, 아래 24 */
+.kv.one { margin: 0 0 24px; }
+.kv.one span:last-child { min-width: 0; overflow-wrap: anywhere; }
 
 /* ── V7 선물 상자 ── */
 .box .body { padding: 8px 16px 24px; }
@@ -220,6 +243,10 @@ body.home-on { background: var(--a-home-bg); }
 .stamp.done { background: var(--a-main-subtle); color: var(--a-main-text); }
 .srow .snm { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .srow .sst { flex: none; }
+/* 수령 전 행(D3-8): 행 전체 버튼, 누를 수 있다는 표시는 chevron 하나 */
+button.srow { width: 100%; text-align: left; color: var(--a-text); border-radius: 0; }
+button.srow:active { background: var(--a-fill); }
+.srow .chev { color: var(--a-t3); margin: 0 -4px 0 -8px; }
 .trow { display: flex; justify-content: space-between; gap: 12px; margin-top: 12px; }
 .grow { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--a-line); min-height: 56px; }
 .grow:last-child { border-bottom: 0; }
@@ -246,7 +273,7 @@ body.home-on { background: var(--a-home-bg); }
 .cbox.on { box-shadow: 0 0 0 1px var(--a-solid-bd-light) inset; }
 
 /* ── 토스트 ── */
-.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(96px + var(--safe-b)); z-index: 40; background: var(--a-toast); color: #FFFFFF;
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(96px + var(--safe-b)); z-index: 40; background: var(--a-toast); color: var(--a-toast-text);
   font-size: 14px; line-height: 20px; padding: 12px 16px; border-radius: var(--a-r); box-shadow: var(--a-sh-pop); width: max-content; max-width: calc(min(100vw, 430px) - 32px); text-align: center; animation: fade .2s; }
 
 @media (prefers-reduced-motion: reduce) {

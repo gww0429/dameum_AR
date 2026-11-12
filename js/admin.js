@@ -2,24 +2,25 @@
    편집 중 내용은 이 PC 브라우저 IndexedDB(dameum_ar_admin)에 자동 저장한다. */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { derive, deriveHome, validHex, DEFAULT_MAIN, DEFAULT_HOME_BG } from './theme.js?v=2';
-import { sha256Hex, isoNow } from './storage.js?v=2';
-import { loadModel, deg, PLACEMENT_DEFAULT } from './ar.js?v=2';
-import { DRAG_SAFE, clampDragY, defaultGuide } from './missions.js?v=2';
-import { toGlb, MODEL_ACCEPT, MODEL_FMT_LABEL } from './convert.js?v=2';
-import { GitHub, gitBlobSha, loadSettings, saveSettings, clearSettings, validRepo, siteUrl, errorInfo } from './github.js?v=2';
-import { normalizeConfig, normalizeMission, GUIDE_MAX } from './config.js?v=2';
-import { IMG_SPECS, SRC_MAX, decodeImage, openImageEditor } from './imageEditor.js?v=2';
+import { derive, deriveHome, validHex, DEFAULT_MAIN, DEFAULT_HOME_BG, PRESET_REP, avgBottom } from './theme.js?v=3.1';
+import { sha256Hex, isoNow } from './storage.js?v=3.1';
+import { loadModel, deg, PLACEMENT_DEFAULT } from './ar.js?v=3.1';
+import { DRAG_SAFE, clampDragY, defaultGuide } from './missions.js?v=3.1';
+import { toGlb, MODEL_ACCEPT, MODEL_FMT_LABEL } from './convert.js?v=3.1';
+import { GitHub, gitBlobSha, loadSettings, saveSettings, clearSettings, validRepo, siteUrl, errorInfo } from './github.js?v=3.1';
+import { normalizeConfig, normalizeMission, GUIDE_MAX, SCHEMA, BG_PRESETS, EFFECTS, BUILTIN_MODELS, builtinModelPath, isBuiltin, builtinUrl, SUCCESS_NOTE_MAX } from './config.js?v=3.1';
+import { IMG_SPECS, SRC_MAX, decodeImage, openImageEditor } from './imageEditor.js?v=3.1';
 
 /* ───────── 기본값 ───────── */
 const MB = 1024 * 1024;
 const GLB_WARN = 15 * MB, FILE_MAX = 50 * MB, POSTER_WARN = 20;
 const CLEAN = ['assets/posters/', 'assets/models/', 'assets/gifts/', 'assets/brand/']; // v2: 안 쓰게 된 v1 로고·대표 이미지도 정리
 const MISSION_LABEL = { tap: '터치 N회', drag: '드래그 앤 드롭', hold: '길게 누르기', rotate: '돌려 보기', find: '숨은 아이템 찾기', quiz: '퀴즈', none: '미션 없음' };
+/* 새로 만드는 미션의 움직임 속도 = 보통(2). v2 에서 넘어온 미션은 변환 때 고정(0) — 명세 C4·C5 */
 const MISSION_DEFAULT = {
-  tap: () => ({ type: 'tap', count: 5, guide: '' }),
-  drag: () => ({ type: 'drag', target: { x: DRAG_SAFE.defX, y: DRAG_SAFE.defY }, icon: '', guide: '' }),
-  hold: () => ({ type: 'hold', seconds: 2, guide: '' }),
+  tap: () => ({ type: 'tap', count: 5, guide: '', speed: 2 }),
+  drag: () => ({ type: 'drag', target: { x: DRAG_SAFE.defX, y: DRAG_SAFE.defY }, icon: '', guide: '', speed: 2 }),
+  hold: () => ({ type: 'hold', seconds: 2, guide: '', speed: 2 }),
   rotate: () => ({ type: 'rotate', marker: 'back', icon: '', guide: '' }),
   find: () => ({ type: 'find', count: 3, icon: '', guide: '' }),
   quiz: () => ({ type: 'quiz', mode: 'choice', question: '', options: ['', ''], answer: 0 }),
@@ -37,14 +38,25 @@ const clone = (o) => JSON.parse(JSON.stringify(o));
 
 function blankConfig() {
   return {
-    schema: 2, projectId: `evt-${ymd()}-${rid(6)}`, projectName: '',
-    home: { background: DEFAULT_HOME_BG, image: '', mainColor: DEFAULT_MAIN, startLabel: '' },
+    schema: SCHEMA, projectId: `evt-${ymd()}-${rid(6)}`, projectName: '',
+    home: { background: DEFAULT_HOME_BG, bgType: 'color', bgPreset: '', image: '', mainColor: DEFAULT_MAIN, startLabel: '' },
     mindFile: 'assets/targets.mind', posters: [],
     stampTour: { enabled: false, gift: { image: '', title: '', description: '', claimNote: '' } },
     staff: { codeHash: '' }, updatedAt: ''
   };
 }
 function blankMeta() { return { files: {}, needMind: false, publishedSig: '', publishedAt: '', drafts: {} }; }
+
+/* 직원 코드 원문(명세 C9): 이 PC 브라우저의 설정 페이지 전용 저장소에만 둔다(프로젝트 id·해시와 함께).
+   발행 파일·config·커밋에는 넣지 않는다. 「새 프로젝트」면 지운다. */
+const STAFF_RAW_KEY = 'dameum_ar_admin:staffCode';
+const StaffRaw = {
+  get() { try { return JSON.parse(localStorage.getItem(STAFF_RAW_KEY) || 'null'); } catch (_) { return null; } },
+  set(pid, hash, code) { try { localStorage.setItem(STAFF_RAW_KEY, JSON.stringify({ pid, hash, code })); } catch (_) {} },
+  clear() { try { localStorage.removeItem(STAFF_RAW_KEY); } catch (_) {} },
+  /* 지금 프로젝트·해시와 맞는 원문만 돌려준다 */
+  match(cfg) { const r = StaffRaw.get(); const hsh = cfg.staff && cfg.staff.codeHash; return r && hsh && r.pid === cfg.projectId && r.hash === hsh ? r.code : null; }
+};
 
 /* ───────── IndexedDB ─────────
    kv: 편집 상태 · files: 발행할 파일 · orig(v2): 이미지 편집기 원본과 마지막 배치(이 PC에만, 발행하지 않음) */
@@ -123,6 +135,31 @@ const section = (title, { desc, right, box } = {}, ...content) => h('section', {
 const settingRow = (label, hintText, control, { end } = {}) => h('div', { class: 'srow' },
   h('div', { class: 'l' }, label, hintText ? h('div', { class: 'h' }, hintText) : null), h('div', { class: 'c' + (end ? ' end' : '') }, control));
 
+/* 12-F-12 썸네일 칩 묶음 thumbChip({items:[{value,label,thumb,pos,disabled}], value, onChange, clearable, label})
+   thumb = 그림 주소(문자열) 또는 () => Promise<주소>(3D 모델 렌더). 렌더 전·실패 = 빈 원. */
+function thumbChip({ items, value, onChange, clearable = false, label }) {
+  const group = h('div', { class: 'tchips', role: 'radiogroup', 'aria-label': label });
+  const chips = items.map((it, i) => {
+    const on = it.value === value;
+    const th = h('span', { class: 'th' });
+    const setImg = (src) => { if (src) th.replaceChildren(h('img', { alt: '', src, style: it.pos ? `object-position:${it.pos}` : null, onerror: (e) => e.target.remove() })); };
+    if (typeof it.thumb === 'function') it.thumb().then(setImg, () => {}); else setImg(it.thumb);
+    const b = h('button', { class: 'tchip' + (on ? ' on' : ''), type: 'button', role: 'radio', 'aria-checked': String(on), disabled: it.disabled, tabindex: on || (value == null && i === 0) ? '0' : '-1',
+      onclick: () => { if (it.disabled) return; onChange(on && clearable ? null : it.value); } }, th, h('span', { class: 'nm' }, it.label));
+    b.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      e.preventDefault();
+      const list = chips.filter((c) => !c.disabled);
+      const k = list.indexOf(b) + (e.key === 'ArrowRight' ? 1 : -1);
+      const nx = list[(k + list.length) % list.length];
+      if (nx) { chips.forEach((c) => c.setAttribute('tabindex', '-1')); nx.setAttribute('tabindex', '0'); nx.focus(); }
+    });
+    return b;
+  });
+  group.append(...chips);
+  return group;
+}
+
 function input(value, onInput, { ph, type = 'text', cls = '', max, err, id, onChange } = {}) {
   const el = h('input', { class: 'inp ' + cls + (err ? ' err' : ''), type, placeholder: ph, maxlength: max, id, autocomplete: 'off', spellcheck: 'false' });
   el.value = value ?? '';
@@ -179,7 +216,7 @@ function urlOf(path) {
   if (!path) return '';
   if (A.urls.has(path)) return A.urls.get(path);
   const b = A.blobs.get(path);
-  if (!b) return path; // 아직 받지 않은 파일은 사이트 상대 경로
+  if (!b) return builtinUrl(path); // 아직 받지 않은 파일·builtin/ 내장 파일은 사이트 상대 경로
   const u = URL.createObjectURL(b);
   A.urls.set(path, u);
   return u;
@@ -245,7 +282,7 @@ function fileField({ path, kind = 'image', required, onFile, onClear, warn, erro
         btn('바꾸기', () => picker.click(), { kind: 'ghost', size: 'sm' }),
         required ? null : btn('지우기', () => onClear && onClear(), { kind: 'ghost', size: 'sm' })));
       if (!err && kind === 'glb' && size > GLB_WARN) wrap.append(help('15MB를 넘어 관람객 로딩이 느려질 수 있습니다.', 'warn'));
-      if (!err && kind === 'glb' && meta && meta.missing) wrap.append(help(`재질·텍스처 파일 ${meta.missing.length}개를 찾지 못해 그 부분은 기본 색으로 변환했습니다: ${meta.missing.slice(0, 3).join(', ')}${meta.missing.length > 3 ? ` 외 ${meta.missing.length - 3}개` : ''}. 모델 파일과 함께 선택하거나 zip으로 올려 주세요.`, 'warn'));
+      if (!err && kind === 'glb' && meta && meta.missing) wrap.append(help(`재질·텍스처 파일 ${meta.missing.length}개를 찾지 못해 그 부분은 기본 색으로 바꿨습니다: ${meta.missing.slice(0, 3).join(', ')}${meta.missing.length > 3 ? ` 외 ${meta.missing.length - 3}개` : ''}. 모델 파일과 함께 선택하거나 zip으로 올려 주세요.`, 'warn'));
       if (!err && warn) wrap.append(help(warn, 'warn'));
     } else {
       const d = h('div', { class: 'drop' + (err ? ' err' : ''), role: 'button', tabindex: '0', onclick: () => picker.click(),
@@ -475,6 +512,14 @@ function sendPreview() {
   iframe.contentWindow.postMessage({ type: 'dameum:config', config: resolvedConfig(), scene: { kind: sc, poster } }, location.origin);
 }
 function sendPreviewSoon() { clearTimeout(pvT); pvT = setTimeout(sendPreview, 150); }
+/* 「미리보기로 보기」: 휴대폰 미리보기 「인식 후」에서 성공 연출만 1회(명세 C3) */
+function playPreviewFx() {
+  if (!pvReady || !iframe.contentWindow) return;
+  if (pvScene() !== 'found') { A.pvUser = 'found'; renderPvSeg(); }
+  clearTimeout(pvT);
+  sendPreview();
+  iframe.contentWindow.postMessage({ type: 'dameum:playfx' }, location.origin);
+}
 function layoutPhone() {
   const fr = $('pvFrame');
   $('phoneCol').style.top = Math.max(16, $('pheadHost').offsetHeight - 24 + 16) + 'px';
@@ -503,21 +548,59 @@ $('pvReload').onclick = () => loadIframe();
 window.addEventListener('resize', () => { if (!$('editWrap').hidden) layoutPhone(); });
 
 /* ───────── A1 홈 꾸미기 ───────── */
+/* 홈 버튼 대비 기준 색(rep): 프리셋 = 대표색, 블러 = 홈 이미지 아래 띠 평균(읽기 전·실패 = 배경색), 단색 = 배경색 */
+function homeRep() {
+  const hm_ = A.cfg.home;
+  if (hm_.bgType === 'preset' && PRESET_REP[hm_.bgPreset]) return PRESET_REP[hm_.bgPreset];
+  if (hm_.bgType === 'blur' && hm_.image && A.blurRep && A.blurRep.key === urlOf(hm_.image) + '|' + hm_.background && A.blurRep.rep) return A.blurRep.rep;
+  return hm_.background;
+}
 function viewHome(ph, form) {
   pageHeader(ph, '홈 꾸미기');
   const hm_ = A.cfg.home;
+  if (!['color', 'preset', 'blur'].includes(hm_.bgType)) hm_.bgType = 'color';
+  if (hm_.bgType === 'blur' && !hm_.image) hm_.bgType = 'color';
   let mainField = null;
-  const bgField = colorField(hm_.background, (v) => { hm_.background = v; changed(); if (mainField) mainField.repaint(); },
+  const bgField = colorField(hm_.background, (v) => { hm_.background = v; changed(); refreshRep(); if (mainField) mainField.repaint(); },
     { plain: true, fallback: DEFAULT_HOME_BG, label: '배경색' });
-  mainField = colorField(hm_.mainColor, (v) => { hm_.mainColor = v; changed(); }, { bg: () => hm_.background });
+  mainField = colorField(hm_.mainColor, (v) => { hm_.mainColor = v; changed(); }, { bg: homeRep });
+  // 블러 기준 색은 이미지를 읽어야 알 수 있다 → 읽은 뒤 메인 색 도움말을 다시 그린다
+  function refreshRep() {
+    if (hm_.bgType !== 'blur' || !hm_.image) return;
+    const key = urlOf(hm_.image) + '|' + hm_.background;
+    if (A.blurRep && A.blurRep.key === key) return;
+    A.blurRep = { key, rep: null };
+    avgBottom(urlOf(hm_.image), hm_.background).then((rep) => { if (A.blurRep && A.blurRep.key === key) { A.blurRep.rep = rep; if (mainField && mainField.isConnected) mainField.repaint(); } });
+  }
+  refreshRep();
   const imgHost = h('div', null, specField({
     specKey: 'home', path: hm_.image, base: 'assets/brand/home',
     onSaved: (np) => { hm_.image = np; changed(); render(); },
-    onClear: async () => { await dropFile(hm_.image); await Orig.del('assets/brand/home'); hm_.image = ''; changed(); render(); }
+    // 블러를 고른 뒤 홈 이미지를 지우면 배경은 단색으로 바뀐다(명세 C1)
+    onClear: async () => { await dropFile(hm_.image); await Orig.del('assets/brand/home'); hm_.image = ''; if (hm_.bgType === 'blur') hm_.bgType = 'color'; changed(); render(); }
   }), hm_.image ? null : help('홈 이미지가 없으면 관람객 홈에 버튼만 보입니다'));
   const cnt = h('span', { class: 'cnt-r' }, `${(hm_.startLabel || '').length} / 20`);
+  // 「배경」 (12-F-8 v2.5): seg 3칸 → 선택별 칸
+  const bgSeg = h('div', { class: 'seg', role: 'group', 'aria-label': '배경' }, [['color', '단색'], ['preset', '프리셋 이미지'], ['blur', '홈 이미지 블러']].map(([v, l]) => {
+    const dis = v === 'blur' && !hm_.image;
+    return h('button', { class: hm_.bgType === v ? 'on' : '', type: 'button', 'aria-pressed': String(hm_.bgType === v), disabled: dis, title: dis ? '홈 이미지를 넣으면 고를 수 있습니다' : null,
+      onclick: () => {
+        if (dis || hm_.bgType === v) return;
+        hm_.bgType = v;
+        if (v === 'preset' && !BG_PRESETS.some(([k]) => k === hm_.bgPreset)) hm_.bgPreset = BG_PRESETS[0][0]; // 처음 고르면 첫 칩
+        changed(); render();
+      } }, l);
+  }));
+  let sub;
+  if (hm_.bgType === 'preset') {
+    sub = thumbChip({ label: '배경 프리셋', value: hm_.bgPreset, clearable: false,
+      items: BG_PRESETS.map(([id, name]) => ({ value: id, label: name, thumb: builtinUrl(`builtin/bg/${id}.jpg`), pos: '50% 30%' })),
+      onChange: (v) => { if (!v || v === hm_.bgPreset) return; hm_.bgPreset = v; changed(); render(); setTimeout(() => { const b = document.querySelector('.tchips .tchip.on'); if (b) b.focus(); }, 0); } });
+  } else if (hm_.bgType === 'blur') sub = help('홈 이미지를 흐리게 해 화면 전체에 깝니다.');
+  else sub = bgField;
   form.append(section('홈 화면', {},
-    field('배경색', bgField),
+    field('배경', h('div', null, h('div', null, bgSeg), h('div', { class: 'bgsub' }, sub),
+      hm_.image ? null : help('홈 이미지를 넣으면 「홈 이미지 블러」를 고를 수 있습니다.'))),
     field('홈 이미지', imgHost),
     field('메인 색', mainField),
     field('시작 버튼 문구', input(hm_.startLabel, (v) => { hm_.startLabel = v; cnt.textContent = `${v.length} / 20`; changed(); }, { ph: 'AR 시작하기', max: 20 }),
@@ -549,7 +632,7 @@ function colorField(value, onChange, { plain = false, sm = false, bg = null, fal
       h('span', { class: 'txt', style: `color:${t.text}` }, '링크 글자'));
     const notes = [];
     if (t.adjusted) notes.push(`글자가 잘 보이도록 버튼 바탕을 ${t.solid}으로 씁니다`);
-    if (bg) { const hb = deriveHome(bg(), hex); if (hb.swap) notes.push(`배경색과 버튼 색이 비슷해 홈 버튼은 ${hb.solid === '#000000' ? '검정' : '흰색'}으로 보입니다`); }
+    if (bg) { const hb = deriveHome(bg(), hex); if (hb.swap) notes.push(`배경과 버튼 색이 비슷해 홈 버튼은 ${hb.solid === '#000000' ? '검정' : '흰색'}으로 보입니다`); }
     msg.replaceChildren(!ok ? help('#과 6자리 16진수로 입력하세요', 'error') : notes.length ? help(notes.join(' · ')) : '');
   };
   txt.addEventListener('input', () => {
@@ -559,7 +642,7 @@ function colorField(value, onChange, { plain = false, sm = false, bg = null, fal
   });
   picker.addEventListener('input', () => { hex = picker.value.toUpperCase(); txt.value = hex.slice(1); ok = true; paint(); onChange(hex); });
   wrap.append(...[h('div', { class: 'colorrow' }, sw, pre), prev, msg].filter(Boolean));
-  wrap.repaint = paint;
+  wrap.repaint = () => { if (wrap.isConnected) paint(); };
   wrap.setValue = (v) => { if (validHex(v)) { hex = v.toUpperCase(); txt.value = hex.slice(1); picker.value = hex.toLowerCase(); ok = true; paint(); } };
   paint();
   return wrap;
@@ -587,7 +670,7 @@ function viewPosters(ph, host) {
       h('td', null, p.image ? h('img', { class: 'pthumb', alt: '', src: urlOf(p.image) }) : h('span', { class: 'pthumb' })),
       h('td', { class: 'name' }, h('div', { class: 'ell', title: p.name }, p.name)),
       h('td', null, tag(MISSION_LABEL[(p.mission && p.mission.type) || 'none'] || '미션 없음')),
-      h('td', null, glbBad ? statusEl('danger', 'GLB 오류') : hasGlb ? statusEl('success', 'GLB 있음') : statusEl('neutral', '임시 모델')),
+      h('td', null, isBuiltin(p.model) ? statusEl('success', '기본 모델') : glbBad ? statusEl('danger', 'GLB 오류') : hasGlb ? statusEl('success', 'GLB 있음') : statusEl('neutral', '임시 모델')),
       h('td', { class: 'acts', onclick: (e) => e.stopPropagation() }, h('div', null,
         iconBtn('chevU', () => movePoster(i, i - 1), '위로', { dis: i === 0 }),
         iconBtn('chevD', () => movePoster(i, i + 1), '아래로', { dis: i === list.length - 1 }),
@@ -678,7 +761,8 @@ function openAddPanel() {
     await putFile(path, st.file, { name: st.file.name });
     A.cfg.posters.push({
       id, name: st.name.trim(), image: path, model: null, placement: 'front', scale: 0.6, position: [...PLACEMENT_DEFAULT.front], rotation: [0, 0, 0],
-      animation: false, spin: false, mission: MISSION_DEFAULT.tap(), gift: { image: '', title: '', description: '', claimNote: '' }
+      animation: false, spin: false, mission: MISSION_DEFAULT.tap(), gift: { enabled: true, image: '', title: '', description: '', claimNote: '' },
+      effect: 'burst', successNote: '' // 새 포스터 기본: 연출 터짐 · 사은품 있음(명세 C3·C6)
     });
     A.meta.needMind = true;
     closeAddPanel();
@@ -718,8 +802,19 @@ function tabBasic(p, form) {
       path: p.image, kind: 'image', required: true, error: A.err.posterImage === p.id ? '포스터 이미지를 올려 주세요' : '',
       onFile: async (file) => { const np = `assets/posters/poster-${p.id}.${extOf(file)}`; if (p.image && p.image !== np) await dropFile(p.image); await putFile(np, file, { name: file.name }); p.image = np; A.err.posterImage = null; A.meta.needMind = true; changed(); render(); }
     }), help('바꾸면 인식 파일을 다시 만듭니다.'))),
-    field('3D 모델', h('div', null, fileField({
-      path: p.model, kind: 'glb',
+    field('3D 모델', h('div', null,
+      // 기본 모델 칩 5개(12-F-12, clearable): 칩과 파일은 둘 중 하나. 고르면 애니메이션 켬(명세 C7)
+      thumbChip({ label: '기본 모델', value: isBuiltin(p.model) ? p.model : null, clearable: true,
+        items: BUILTIN_MODELS.map(([id, name]) => ({ value: builtinModelPath(id), label: name, thumb: () => modelThumb(builtinModelPath(id)) })),
+        onChange: async (v) => {
+          if (p.model && !isBuiltin(p.model)) await dropFile(p.model); // 올렸던 파일은 쓰지 않으므로 다음 발행 때 정리된다
+          p.model = v || null;
+          p.animation = !!v;
+          changed(); render();
+        } }),
+      h('div', { style: 'height:var(--s2)' }),
+      fileField({
+      path: isBuiltin(p.model) ? null : p.model, kind: 'glb',
       onFile: async (file, res = {}) => {
         const np = `assets/models/model-${p.id}.glb`;
         const u = URL.createObjectURL(file);
@@ -733,12 +828,46 @@ function tabBasic(p, form) {
       },
       onClear: async () => { await dropFile(p.model); p.model = null; p.animation = false; changed(); render(); },
       error: glbMeta && glbMeta.failed ? 'GLB를 읽지 못했습니다 · 임시 모델로 보입니다' : ''
-    }), p.model ? null : help('3D 모델을 올리기 전까지 임시 모델로 보입니다'),
-    help('GLB(5MB 안팎) 권장. 다른 형식은 GLB로 바꿔 저장하고, 텍스처는 함께 선택하거나 zip으로 올려 주세요.')))));
+    }), p.model ? null : help('기본 모델을 고르거나 직접 올려 주세요 · 고르기 전까지 임시 모델로 보입니다'),
+    help('GLB(5MB 안팎) 권장. 다른 형식은 GLB로 바꿔 저장하고 텍스처는 함께 선택하거나 zip으로 올려 주세요.')))));
 }
 
 /* 3D 미리보기 패널 (12-F-4) */
 function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+
+/* 기본 모델 칩 썸네일(D3-7): GLB 를 처음 한 번 48px 로 렌더(바탕 n100, 정면에서 오른쪽 20°·위 15°, 클립 0초 자세, 3D 미리보기와 같은 조명).
+   별도 썸네일 파일은 만들지 않는다. 실패하면 빈 원. */
+const thumbCache = new Map();
+function modelThumb(path) {
+  if (thumbCache.has(path)) return thumbCache.get(path);
+  const job = loadModel(urlOf(path)).then((m) => {
+    if (m.failed) throw new Error('model');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(cssVar('--n100'));
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x444450, 2.2));
+    const sun = new THREE.DirectionalLight(0xffffff, 1.6); sun.position.set(0.5, 1, 1); scene.add(sun);
+    const obj = m.wrap.clone(true);
+    scene.add(obj);
+    if (m.clips && m.clips.length) { const mx = new THREE.AnimationMixer(obj); m.clips.forEach((c) => mx.clipAction(c).play()); mx.update(0); }
+    obj.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(obj), c = box.getCenter(new THREE.Vector3());
+    const rad = box.getBoundingSphere(new THREE.Sphere()).radius || 0.5;
+    const cam = new THREE.PerspectiveCamera(30, 1, 0.01, 100);
+    const d = rad / Math.sin(deg(15)) * 1.02;
+    cam.position.set(c.x + d * Math.cos(deg(15)) * Math.sin(deg(20)), c.y + d * Math.sin(deg(15)), c.z + d * Math.cos(deg(15)) * Math.cos(deg(20)));
+    cam.lookAt(c);
+    const r = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    try {
+      r.outputColorSpace = THREE.SRGBColorSpace;
+      r.setPixelRatio(1); r.setSize(48, 48, false);
+      r.render(scene, cam);
+      return r.domElement.toDataURL('image/png');
+    } finally { r.dispose(); r.forceContextLoss(); }
+  });
+  job.catch(() => thumbCache.delete(path));
+  thumbCache.set(path, job);
+  return job;
+}
 function makeViewport() {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(cssVar('--n50'));
@@ -807,7 +936,7 @@ function makeViewport() {
       const key = p.model ? urlOf(p.model) : null;
       const meta = p.model ? A.meta.files[p.model] : null;
       bot.className = 'vp-bot';
-      bot.textContent = !p.model ? 'GLB를 올리기 전까지 임시 모델로 보입니다' : '끌기: 돌려 보기 · 휠: 확대 · 오른쪽 끌기: 이동';
+      bot.textContent = !p.model ? '기본 모델을 고르거나 GLB를 올리기 전까지 임시 모델로 보입니다' : '끌기: 돌려 보기 · 휠: 확대 · 오른쪽 끌기: 이동';
       if (key !== modelKey) {
         modelKey = key;
         scaleG.clear();
@@ -864,7 +993,7 @@ function tabPlace(p, form) {
     return h('div', null, row, errBox);
   };
   const glbMeta = p.model ? A.meta.files[p.model] : null;
-  const anims = glbMeta && !glbMeta.failed ? (glbMeta.anims || 0) : 0;
+  const anims = isBuiltin(p.model) ? 1 : glbMeta && !glbMeta.failed ? (glbMeta.anims || 0) : 0; // 기본 모델 = 클립 1개
   const rotateMission = p.mission && p.mission.type === 'rotate';
   form.append(section('3D 배치', { right: btn('기본값으로', reset, { size: 'sm' }) },
     A.vp.el,
@@ -876,7 +1005,7 @@ function tabPlace(p, form) {
     field('회전', xyz('rotation', -180, 180, 1, 0), { hint: '· °' }),
     h('div', { class: 'trow', style: 'margin-top:16px' },
       h('div', null, h('div', { class: 'w5' }, '애니메이션 재생'),
-        h('div', { class: 'h' }, !p.model ? 'GLB를 올리면 쓸 수 있습니다' : anims ? `GLB의 애니메이션 ${anims}개를 반복 재생합니다` : '이 GLB에는 애니메이션이 없습니다')),
+        h('div', { class: 'h' }, !p.model ? 'GLB를 올리면 쓸 수 있습니다' : isBuiltin(p.model) ? '기본 모델의 움직임을 반복 재생합니다' : anims ? `GLB의 애니메이션 ${anims}개를 반복 재생합니다` : '이 GLB에는 애니메이션이 없습니다')),
       toggle(!!p.animation && anims > 0, () => { p.animation = !p.animation; changed(); render(); }, !anims)),
     h('div', { class: 'trow' },
       h('div', null, h('div', { class: 'w5' }, '천천히 돌리기'), rotateMission ? help('돌려 보기 미션에서는 꺼집니다', 'lock') : null),
@@ -981,7 +1110,24 @@ function missionForm(p) {
     }
     default: box.append(help('관람객 화면에는 카드 없이 3D만 보입니다. 스탬프 투어 집계에서 빠집니다.'));
   }
+  // 움직임 속도(12-F-7 v2.5): 드래그 = 목표, 터치·길게 누르기 = 3D
+  if (['tap', 'hold', 'drag'].includes(m.type)) {
+    const sp = [0, 1, 2, 3].includes(Number(m.speed)) ? Number(m.speed) : 0;
+    const isDrag = m.type === 'drag';
+    const hint = isDrag ? (sp ? '목표 위치에서 출발해 회색 영역 위(Y 0~48%)를 움직입니다.' : '목표 위치에 고정됩니다.')
+      : (sp ? '인식 직후 포스터 위에 나타난 뒤 카드 위 영역을 떠다닙니다.' : '3D 배치 위치에 고정됩니다.');
+    box.append(field(isDrag ? '목표 움직임 속도' : '3D 움직임 속도', h('div', null,
+      seg([[0, '고정'], [1, '느림'], [2, '보통'], [3, '빠름']], sp, (v) => { m.speed = v; changed(); render(); }, { label: isDrag ? '목표 움직임 속도' : '3D 움직임 속도' }),
+      help(hint))));
+  }
   if (guideIn) box.append(field('안내 문구', guideIn, { count: guideCnt, helpEl: help('비우면 기본 문구를 씁니다. 횟수를 바꾸면 직접 쓴 문구도 함께 고쳐 주세요.') }));
+  // 성공 연출(미션 없음 제외, 맨 아래): seg 3칸 + 「미리보기로 보기」
+  if (m.type !== 'none') {
+    const fx = EFFECTS.some(([k]) => k === p.effect) ? p.effect : 'burst';
+    box.append(field('성공 연출', h('div', { class: 'inline' },
+      seg(EFFECTS, fx, (v) => { p.effect = v; changed(); render(); }, { label: '성공 연출' }),
+      btn('미리보기로 보기', () => playPreviewFx(), { kind: 'ghost', size: 'sm' }))));
+  }
   wrap.append(box);
   return wrap;
 }
@@ -990,19 +1136,31 @@ function renderSideSoon() { clearTimeout(sideT); sideT = setTimeout(renderSide, 
 
 function giftFields(g, base, onDone) {
   return [
-    field('이미지', specField({
+    field('이미지', h('div', null, specField({
       specKey: 'gift', path: g.image, base: `assets/gifts/${base}`,
       onSaved: (np) => { g.image = np; changed(); onDone(); },
       onClear: async () => { await dropFile(g.image); await Orig.del(stripExt(g.image)); g.image = ''; changed(); onDone(); }
-    })),
+    }), g.image ? null : help('비우면 기본 선물 상자 그림이 보입니다'))),
     field('제목', input(g.title, (v) => { g.title = v; changed(); }, { max: 40, ph: '예: 스티커 1장' })),
     field('설명', input(g.description, (v) => { g.description = v; changed(); }, { max: 80 })),
     field('수령 안내', input(g.claimNote, (v) => { g.claimNote = v; changed(); }, { max: 60, ph: '예: B-12 부스에서 선물 상자를 보여 주세요' }), { helpEl: help('비우면 그 줄이 관람객 화면에 보이지 않습니다.') })
   ];
 }
 function tabGift(p, form) {
-  p.gift = p.gift || { image: '', title: '', description: '', claimNote: '' };
-  form.append(section('사은품 시트', {}, giftFields(p.gift, 'gift-' + p.id, () => render())));
+  p.gift = p.gift || { enabled: true, image: '', title: '', description: '', claimNote: '' };
+  if (typeof p.gift.enabled !== 'boolean') p.gift.enabled = true;
+  if (typeof p.successNote !== 'string') p.successNote = '';
+  const g = p.gift;
+  // 「사은품 주기」(12-F-7 v2.5): 끄면 성공 안내 문구 한 칸만. 끈 동안 사은품 칸 값은 그대로 보관한다.
+  const top = settingRow('사은품 주기', null, toggle(g.enabled, () => { g.enabled = !g.enabled; changed(); render(); }), { end: true });
+  let rest;
+  if (g.enabled) rest = giftFields(g, 'gift-' + p.id, () => render());
+  else {
+    const cnt = h('span', { class: 'cnt-r' }, `${p.successNote.length} / ${SUCCESS_NOTE_MAX}`);
+    rest = [field('성공 안내 문구', input(p.successNote, (v) => { p.successNote = v; cnt.textContent = `${v.length} / ${SUCCESS_NOTE_MAX}`; changed(); }, { max: SUCCESS_NOTE_MAX }),
+      { count: cnt, helpEl: help('미션을 성공하면 「미션 성공」과 이 문구만 보입니다. 스탬프 투어 완료 개수에는 들어갑니다.') })];
+  }
+  form.append(section('사은품 시트', {}, top, rest));
 }
 
 /* ───────── A4 직원 코드·스탬프 투어 ───────── */
@@ -1012,8 +1170,14 @@ function viewStaff(ph, host) {
   const set = !!(A.cfg.staff && A.cfg.staff.codeHash);
   let control;
   if (!A.staffEdit) {
-    control = h('div', null, h('div', { class: 'inline' }, set ? statusEl('success', '설정됨') : statusEl('warning', '없음'),
+    // 12-F-13 현재 코드 행: 원문(이 PC에서 정한 코드) / 없음 / 다른 PC
+    const raw = set ? StaffRaw.match(A.cfg) : null;
+    const val = !set ? h('span', { class: 'kvv none' }, '없음')
+      : raw ? h('span', { class: 'kvv code num' }, raw)
+        : h('span', { class: 'kvv none' }, '이 PC에서 정한 코드가 아닙니다');
+    control = h('div', null, h('div', { class: 'kvrow' }, h('span', { class: 'kvl' }, '현재 코드'), val,
       btn('새로 정하기', () => { A.staffEdit = true; render(); setTimeout(() => { const i = $('staffNew'); if (i) i.focus(); }, 0); }, { size: 'sm' })),
+    set && !raw ? help('새로 정하면 이 PC에서 원문이 보입니다.') : null,
     A.err.staff && !set ? help('직원 코드를 먼저 정해 주세요', 'error') : null);
   } else {
     const errBox = h('div');
@@ -1023,13 +1187,15 @@ function viewStaff(ph, host) {
       const v = inp.value.trim();
       if (v.length < 4 || v.length > 12) { inp.classList.add('err'); errBox.replaceChildren(help('4~12자로 입력하세요', 'error')); return; }
       A.cfg.staff = { codeHash: await sha256Hex(A.cfg.projectId + ':' + v) };
+      StaffRaw.set(A.cfg.projectId, A.cfg.staff.codeHash, v); // 원문은 이 PC 설정 페이지 저장소에만(공개 config 에는 해시만)
       A.staffEdit = false; A.err.staff = false;
       changed(); toast('직원 코드를 저장했습니다'); render();
     };
     inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') { A.staffEdit = false; render(); } });
     control = h('div', null, h('div', { class: 'inline' }, inp, btn('저장', save, { kind: 'primary', size: 'sm' }), btn('취소', () => { A.staffEdit = false; render(); }, { kind: 'ghost', size: 'sm' })), errBox);
   }
-  wrap.append(section('직원 코드', { box: true }, settingRow('현재 코드', '관람객 선물 상자에서 수령 처리할 때 부스 직원이 입력합니다. 원문은 저장하지 않습니다.', control)));
+  wrap.append(section('직원 코드', { box: true, desc: '관람객 선물 상자에서 수령 처리할 때 부스 직원이 입력합니다. 원문은 코드를 정한 PC 브라우저에만 남고 공개 config에는 해시만 저장됩니다.' },
+    A.staffEdit ? settingRow('현재 코드', null, control) : control));
   const st = A.cfg.stampTour || (A.cfg.stampTour = { enabled: false, gift: { image: '', title: '', description: '', claimNote: '' } });
   st.gift = st.gift || { image: '', title: '', description: '', claimNote: '' };
   const rows = [settingRow('사용', '미션이 있는 포스터를 모두 완료하면 완주 선물을 줍니다', toggle(!!st.enabled, () => { st.enabled = !st.enabled; changed(); render(); }), { end: true })];
@@ -1124,7 +1290,8 @@ function compileMind({ inPublish = false } = {}) {
 /* ───────── 불러오기 · 새 프로젝트 ───────── */
 function referenced(cfg) {
   const s = new Set();
-  const add = (p) => { if (p && typeof p === 'string' && !/^(https?:|blob:|data:)/.test(p)) s.add(p); };
+  // builtin/ 은 코드와 함께 배포되는 내장 파일이라 불러오기·발행 파일 목록에서 건너뛴다(명세 §3)
+  const add = (p) => { if (p && typeof p === 'string' && !/^(https?:|blob:|data:)/.test(p) && !p.startsWith('builtin/')) s.add(p); };
   add(cfg.home && cfg.home.image); add(cfg.mindFile); // v2: 로고·대표 이미지는 참조하지 않는다(불러오지 않고, 발행 때 정리)
   (cfg.posters || []).forEach((p) => { add(p.image); add(p.model); add(p.gift && p.gift.image); add(p.mission && p.mission.icon); });
   add(cfg.stampTour && cfg.stampTour.gift && cfg.stampTour.gift.image);
@@ -1143,6 +1310,7 @@ function newProject() {
     title: '새 프로젝트를 만들까요?', msg: '편집 중인 내용이 모두 지워집니다.', ok: '새 프로젝트', tone: 'danger',
     onOk: async () => {
       await resetLocal();
+      StaffRaw.clear(); // 이 PC의 직원 코드 원문도 지운다(데이터 분리)
       A.cfg = blankConfig();
       await saveNow();
       toast('새 프로젝트를 만들었습니다');
@@ -1153,7 +1321,7 @@ function newProject() {
 }
 function hasEdits() {
   const c = A.cfg, hm_ = c.home || {};
-  return c.posters.length > 0 || !!(hm_.image || hm_.startLabel) || (hm_.background || DEFAULT_HOME_BG).toUpperCase() !== DEFAULT_HOME_BG ||
+  return c.posters.length > 0 || !!(hm_.image || hm_.startLabel) || (hm_.background || DEFAULT_HOME_BG).toUpperCase() !== DEFAULT_HOME_BG || (hm_.bgType || 'color') !== 'color' ||
     !!(c.staff && c.staff.codeHash) || !!(c.stampTour && c.stampTour.enabled) || (hm_.mainColor || DEFAULT_MAIN).toUpperCase() !== DEFAULT_MAIN;
 }
 function loadFromSite() {
@@ -1176,10 +1344,10 @@ function loadFromSite() {
         for (const p of referenced(cfg)) { const fr = await fetch(p, { cache: 'no-store' }); if (fr.ok) files.set(p, await fr.blob()); }
       }
       if (!cfg || !Array.isArray(cfg.posters) || !cfg.home) throw new Error('설정 형식이 맞지 않습니다');
-      const fromV1 = cfg.schema !== 2;
+      const fromV1 = cfg.schema !== SCHEMA; // v1·v2 형식이면 다시 발행해야 schema 3 으로 바뀐다
       await resetLocal();
       const base = blankConfig();
-      A.cfg = normalizeConfig(cfg); // v1(schema 1)이면 v2로 변환. 발행하면 schema 2로 저장된다
+      A.cfg = normalizeConfig(cfg); // v1·v2(schema 1·2)면 v3로 변환. 발행하면 schema 3으로 저장된다
       if (!A.cfg.projectId) A.cfg.projectId = base.projectId;
       for (const [p, b] of files) {
         let info = { name: p.split('/').pop() };
@@ -1187,7 +1355,7 @@ function loadFromSite() {
         await putFile(p, b, info);
       }
       A.meta.needMind = A.cfg.posters.length > 0 && !files.has(A.cfg.mindFile);
-      A.meta.publishedSig = fromV1 ? '' : sig(); // v1 형식이면 다시 발행해야 v2로 바뀐다
+      A.meta.publishedSig = fromV1 ? '' : sig(); // v1·v2 형식이면 다시 발행해야 schema 3으로 바뀐다
       A.meta.publishedAt = cfg.updatedAt || '';
       await saveNow();
       A.busy = false;
@@ -1201,7 +1369,7 @@ function loadFromSite() {
       askConfirm({ title: info.title, msg: info.msg, ok: info.retry ? '다시 시도' : '확인', noCancel: !info.retry, onOk: info.retry ? run : null });
     }
   };
-  if (hasEdits()) askConfirm({ title: '사이트에서 불러올까요?', msg: '편집 중인 내용을 사이트의 설정으로 덮어씁니다.', ok: '불러오기', onOk: run });
+  if (hasEdits()) askConfirm({ title: '사이트에서 불러올까요?', msg: '편집 중인 내용을 사이트 설정으로 덮어씁니다.', ok: '불러오기', onOk: run });
   else run();
 }
 
@@ -1217,7 +1385,7 @@ function validate() {
 }
 function commitMessage(d = new Date()) { return `dameum_AR 설정 발행 ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hm(d)}`; }
 async function buildLocalFiles() {
-  const cfg = normalizeConfig(A.cfg); // 발행은 언제나 schema 2, 알 수 없는 필드는 뺀다
+  const cfg = normalizeConfig(A.cfg); // 발행은 언제나 schema 3, 알 수 없는 필드는 뺀다(직원 코드 원문은 cfg 에 없다)
   cfg.updatedAt = isoNow();
   const keep = referenced(cfg);
   const local = [];
@@ -1284,7 +1452,7 @@ async function boot() {
     // v1 의 로고·대표 이미지 Blob 은 더 이상 참조하지 않으므로 편집 저장소에서 지운다
     for (const k of [...A.blobs.keys()]) if (k.startsWith('assets/brand/') && k !== A.cfg.home.image) await dropFile(k);
     Object.keys(A.meta.files).forEach((k) => { if (k.startsWith('assets/brand/') && k !== A.cfg.home.image) delete A.meta.files[k]; });
-    if (saved.cfg.schema !== 2 && DB.db) await saveNow();
+    if (saved.cfg.schema !== SCHEMA && DB.db) await saveNow();
   } else {
     A.cfg = blankConfig();
     if (DB.db) await saveNow();

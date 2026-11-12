@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="theme-color" content="#111316">
 <title>AR 전시</title>
-<link rel="stylesheet" href="css/app.css?v=2">
+<link rel="stylesheet" href="css/app.css?v=3.1">
 <script type="importmap">
 { "imports": {
   "three": "./lib/three/three.module.js",
@@ -16,6 +16,7 @@
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <symbol id="i-chevL" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></symbol>
+  <symbol id="i-chevR" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
   <symbol id="i-chevD" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
   <symbol id="i-chevU" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></symbol>
@@ -23,6 +24,7 @@
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
 </svg>
 
+<main>
 <!-- 카메라·3D 무대 -->
 <div id="stage" hidden></div>
 
@@ -38,9 +40,12 @@
   </div>
 </section>
 
-<!-- V1 홈: 배경색 + 홈 이미지 + 버튼 두 개 -->
+<!-- V1 홈 배경 그림(프리셋 · 홈 이미지 블러): 화면 전체(431px 이상이면 앱 바깥까지) -->
+<div class="hbg" id="homeBg" hidden aria-hidden="true"></div>
+
+<!-- V1 홈: 배경 + 홈 이미지 + 버튼 두 개 -->
 <section id="v1" class="scr homev" hidden>
-  <div class="himg"><img id="homeImg" alt="" hidden></div>
+  <div class="himg" id="homeImgBox"></div>
   <div class="hbar">
     <p class="hnote" id="homeNote" hidden>준비 중인 행사입니다</p>
     <div class="row">
@@ -75,6 +80,7 @@
   <div class="mload" id="mload" hidden><div class="spin s20"></div></div>
   <div id="mlayer"></div>
   <div class="sheet mcard" id="card" hidden></div>
+  <canvas class="fx" id="fx" hidden aria-hidden="true"></canvas>
 </section>
 
 <!-- V5 사은품 시트 -->
@@ -84,13 +90,14 @@
     <div class="handle"></div>
     <div class="body" id="giftBody">
       <div class="xs" id="giftHead" style="margin-top:12px"></div>
-      <div class="lg" id="giftTitle" style="margin-top:4px"></div>
-      <div class="gimg" id="giftImgBox" hidden><img id="giftImg" alt=""></div>
+      <div class="lg" id="giftTitle"></div>
+      <p class="sm t2" id="giftNote" hidden></p>
+      <div class="gimg" id="giftImgBox" hidden></div>
       <p class="sm t2" id="giftDesc" style="margin-top:12px" hidden></p>
       <div class="kv" id="giftClaim" hidden><span class="k">받는 곳</span><span id="giftClaimTxt"></span></div>
       <p class="xs t2" id="giftNoSave" style="margin-top:12px;font-weight:400" hidden>이 브라우저에서는 선물이 저장되지 않아요</p>
     </div>
-    <button class="abtn primary" id="giftOk" style="margin-top:20px;flex:none">확인</button>
+    <button class="abtn primary" id="giftOk">확인</button>
   </div>
 </section>
 
@@ -108,6 +115,8 @@
   <div class="bar"><button class="abtn primary" id="staffOk">확인</button></div>
 </section>
 
+</main>
+
 <div class="toast" id="toast" role="status" hidden></div>
 
 <script>
@@ -120,6 +129,6 @@ if (location.protocol === 'file:') {
   document.getElementById('v2').hidden = false;
 }
 </script>
-<script type="module" src="js/app.js?v=2"></script>
+<script type="module" src="js/app.js?v=3.1"></script>
 </body>
 </html>

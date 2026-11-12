@@ -1,7 +1,8 @@
 /* 미션 6종: tap · drag · hold · rotate · find · quiz (+ none)
    판정은 입력 이벤트와 performance.now() 경과 시간으로만 한다. 화면 위치 맞추기만 그리기 주기에 맡긴다. */
 import * as THREE from 'three';
-import * as haptics from './haptics.js?v=2';
+import * as haptics from './haptics.js?v=3.1';
+import { SPEED_PCT } from './config.js?v=3.1';
 
 export const MISSION_TYPES = ['tap', 'drag', 'hold', 'rotate', 'find', 'quiz', 'none'];
 /* 드래그 목표 안전 영역(화면 높이 %): 설명·미션 카드는 최대 높이 45%라 위쪽 55%만 늘 보인다.
@@ -11,6 +12,9 @@ export const clampDragY = (y) => Math.max(0, Math.min(DRAG_SAFE.yMax, y));
 const DIRS = { front: [0, 0, 1], back: [0, 0, -1], left: [-1, 0, 0], right: [1, 0, 0], up: [0, 1, 0], down: [0, -1, 0] };
 const ICON_CHECK = '<svg class="i i24"><use href="#i-check"/></svg>';
 const MOVE_TAP = 12;
+const TARGET_R = 36;              // 드래그 목표 원 반지름(지름 72)
+const HIT_TAP = 12, HIT_HOLD = 24; // 떠다니는 3D 맞힘 범위 = 화면상 테두리 + px (명세 C5)
+const deg15 = 15 * Math.PI / 180;
 
 const num = (v, d) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : d; };
 const fmt1 = (v) => (Math.floor(v * 10) / 10).toFixed(1);
@@ -60,8 +64,15 @@ export function createMission(poster, ctx) {
     st.holdAt = 0;
     if (gauge) gauge.hidden = true;
   }
+  /* 떠다니는 3D 위에 손가락이 있는지(길게 누르기): 벗어나면 v2처럼 처음으로 */
+  function holdStillOn() {
+    const fc = stage.floatCircle();
+    if (!fc || !st.ptr) return true;
+    return Math.hypot(st.ptr.lx - fc.x, st.ptr.ly - fc.y) <= fc.r + HIT_HOLD;
+  }
   function holdTick() {
     if (!st.holdAt || st.done) return;
+    if (!holdStillOn()) { clearHold(); st.count = 0; changed(); return; }
     const sec = num(m.seconds, 2);
     const el = (performance.now() - st.holdAt) / 1000;
     if (performance.now() - st.lastPulse >= 250) { st.lastPulse = performance.now(); haptics.holdPulse(); }
@@ -89,6 +100,9 @@ export function createMission(poster, ctx) {
       t.style.left = (Number.isFinite(tx) ? tx : DRAG_SAFE.defX) + '%';
       t.style.top = clampDragY(Number.isFinite(ty) ? ty : DRAG_SAFE.defY) + '%';
       layer.appendChild(t); st.els.push(t); st.target = t;
+      // 목표 움직임(명세 C4): 고정이 아니면 목표 위치에서 출발해 안전 영역 안을 일정 속도로 움직인다
+      const pct = SPEED_PCT[Number(m.speed) || 0] || 0;
+      st.tgt = pct ? { pct, sx: Number.isFinite(tx) ? tx : DRAG_SAFE.defX, sy: clampDragY(Number.isFinite(ty) ? ty : DRAG_SAFE.defY), x: null, y: 0, vx: 0, vy: 0, last: 0 } : null;
     }
     if (type === 'hold') {
       gauge = document.createElement('div');
@@ -146,8 +160,58 @@ export function createMission(poster, ctx) {
     st.markers.push(mk); st.els.push(b);
   }
 
+  /* 움직이는 드래그 목표: 영역 = 원 전체가 화면 좌우 안 · 중심 y ≤ 48% · 상단 칩 아래(카드·칩에 가리지 않음) */
+  function moveTarget(now) {
+    const T = st.tgt, el = st.target;
+    if (!T || !el || st.done) return;
+    const r = lrect();
+    if (!r.width || !r.height) return;
+    const top = ctx.topLimit ? Math.max(0, ctx.topLimit() - r.top) : 0;
+    const minX = TARGET_R, maxX = Math.max(TARGET_R, r.width - TARGET_R);
+    const maxY = r.height * DRAG_SAFE.yMax / 100, minY = Math.min(maxY, top + TARGET_R);
+    const v = T.pct * r.width;
+    if (T.x == null) { // 시작: 목표 위치, 방향 무작위
+      T.x = Math.max(minX, Math.min(maxX, T.sx / 100 * r.width)); T.y = Math.max(minY, Math.min(maxY, T.sy / 100 * r.height));
+      const a = Math.random() * Math.PI * 2; T.vx = Math.cos(a) * v; T.vy = Math.sin(a) * v; T.last = now;
+    }
+    const dt = Math.min(0.1, Math.max(0, (now - T.last) / 1000)); T.last = now;
+    const sp0 = Math.hypot(T.vx, T.vy) || 1; T.vx = T.vx / sp0 * v; T.vy = T.vy / sp0 * v;
+    T.x += T.vx * dt; T.y += T.vy * dt;
+    const turn = () => { const a = Math.atan2(T.vy, T.vx) + (Math.random() - 0.5) * 2 * deg15; T.vx = Math.cos(a) * v; T.vy = Math.sin(a) * v; };
+    if (T.x < minX) { T.x = Math.min(maxX, 2 * minX - T.x); turn(); T.vx = Math.abs(T.vx); }
+    else if (T.x > maxX) { T.x = Math.max(minX, 2 * maxX - T.x); turn(); T.vx = -Math.abs(T.vx); }
+    if (T.y < minY) { T.y = Math.min(maxY, 2 * minY - T.y); turn(); T.vy = Math.abs(T.vy); }
+    else if (T.y > maxY) { T.y = Math.max(minY, 2 * maxY - T.y); turn(); T.vy = -Math.abs(T.vy); }
+    el.style.left = T.x + 'px'; el.style.top = T.y + 'px';
+  }
+  /* 3D 를 끌고 있는 동안 「목표 위에 있음」을 매 프레임 다시 계산(목표가 움직이므로) */
+  function checkInside() {
+    if (type !== 'drag' || !st.dragging || !st.target) return;
+    const c = stage.dragCenterClient();
+    const tr = st.target.getBoundingClientRect();
+    const inside = !!c && Math.hypot(c.x - (tr.left + tr.width / 2), c.y - (tr.top + tr.height / 2)) <= tr.width / 2;
+    if (inside && !st.inside) haptics.short();
+    st.inside = inside;
+    st.target.classList.toggle('hit', inside);
+  }
+  /* 길게 누르기 게이지: 떠다니면 3D 를 따라간다(위 → 넘치면 아래, D3-3) */
+  function placeGaugeFloat() {
+    if (!gauge || gauge.hidden || type !== 'hold') return;
+    const fc = stage.floatCircle();
+    if (!fc) return;
+    const off = fc.r + 8 + 32;
+    let gy = fc.y - off;
+    const topY = ctx.topLimit ? ctx.topLimit() : lrect().top;
+    if (gy - 32 < topY) gy = fc.y + off;
+    place(gauge, fc.x - 32, gy - 32);
+  }
+
   /* 화면 위치 맞추기 (그리기 주기·입력 직후) */
   function sync() {
+    const now = performance.now();
+    moveTarget(now);
+    checkInside();
+    placeGaugeFloat();
     const vis = stage.visible();
     st.markers.forEach((mk) => {
       if (!vis) { mk.el.hidden = true; return; }
@@ -163,12 +227,14 @@ export function createMission(poster, ctx) {
   function down(e) {
     if (st.done || type === 'none' || type === 'quiz') return;
     st.ptr = { id: e.pointerId, x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, t: performance.now(), hit: false, moved: false };
-    const hit = stage.hitModel(e.clientX, e.clientY);
+    // 떠다니는 3D(터치·길게 누르기, 명세 C5)는 화면상 테두리 원 + 여유 px 로 맞힘을 본다
+    const fc = (type === 'tap' || type === 'hold') ? stage.floatCircle() : null;
+    const hit = fc ? Math.hypot(e.clientX - fc.x, e.clientY - fc.y) <= fc.r + (type === 'hold' ? HIT_HOLD : HIT_TAP) : stage.hitModel(e.clientX, e.clientY);
     st.ptr.hit = hit;
     if (type === 'drag' && hit) { stage.beginDrag(e.clientX, e.clientY); st.dragging = true; }
     if (type === 'hold' && hit) {
       st.holdAt = performance.now(); st.lastPulse = st.holdAt; haptics.holdPulse();
-      if (gauge) { gauge.hidden = false; place(gauge, e.clientX - 32, e.clientY - 72 - 64); drawGauge(0, num(m.seconds, 2)); }
+      if (gauge) { gauge.hidden = false; if (fc) placeGaugeFloat(); else place(gauge, e.clientX - 32, e.clientY - 72 - 64); drawGauge(0, num(m.seconds, 2)); }
       st.holdTimer = setInterval(holdTick, 50);
     }
   }
@@ -178,12 +244,11 @@ export function createMission(poster, ctx) {
     if (Math.hypot(e.clientX - p.x, e.clientY - p.y) > MOVE_TAP) p.moved = true;
     if (type === 'drag' && st.dragging) {
       stage.dragTo(e.clientX, e.clientY);
-      const c = stage.dragCenterClient();
-      const tr = st.target.getBoundingClientRect();
-      const inside = !!c && Math.hypot(c.x - (tr.left + tr.width / 2), c.y - (tr.top + tr.height / 2)) <= tr.width / 2;
-      if (inside && !st.inside) haptics.short();
-      st.inside = inside;
-      st.target.classList.toggle('hit', inside);
+      checkInside();
+    }
+    if (type === 'hold' && st.holdAt) {
+      p.lx = e.clientX; p.ly = e.clientY;
+      if (!holdStillOn()) { clearHold(); st.count = 0; changed(); }
     }
     if ((type === 'rotate' || type === 'find') && !p.holdOnly) {
       stage.rotateBy(e.clientX - p.lx, e.clientY - p.ly);
@@ -203,6 +268,7 @@ export function createMission(poster, ctx) {
       if (st.count >= num(m.count, 5)) win();
     }
     if (type === 'drag' && st.dragging) {
+      checkInside(); // 손을 뗀 순간 겹쳐 있으면 성공(목표가 움직여도 같은 판정)
       st.dragging = false;
       if (st.inside) { stage.endDrag(true); win(); }
       else { stage.endDrag(false); st.target.classList.remove('hit'); }
