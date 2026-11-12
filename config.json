@@ -40,68 +40,6 @@
         "description": "",
         "claimNote": ""
       }
-    },
-    {
-      "id": "pm5ob4i",
-      "name": "이터너티",
-      "image": "assets/posters/poster-pm5ob4i.jpg",
-      "model": null,
-      "placement": "front",
-      "scale": 0.6,
-      "position": [
-        0,
-        0,
-        0.35
-      ],
-      "rotation": [
-        0,
-        0,
-        0
-      ],
-      "animation": false,
-      "spin": false,
-      "mission": {
-        "type": "tap",
-        "count": 5,
-        "guide": ""
-      },
-      "gift": {
-        "image": "",
-        "title": "",
-        "description": "",
-        "claimNote": ""
-      }
-    },
-    {
-      "id": "pffp274",
-      "name": "춘몽",
-      "image": "assets/posters/poster-pffp274.jpg",
-      "model": null,
-      "placement": "front",
-      "scale": 0.6,
-      "position": [
-        0,
-        0,
-        0.35
-      ],
-      "rotation": [
-        0,
-        0,
-        0
-      ],
-      "animation": false,
-      "spin": false,
-      "mission": {
-        "type": "tap",
-        "count": 5,
-        "guide": ""
-      },
-      "gift": {
-        "image": "",
-        "title": "",
-        "description": "",
-        "claimNote": ""
-      }
     }
   ],
   "stampTour": {
@@ -116,5 +54,5 @@
   "staff": {
     "codeHash": "bccea621f24c66dfa1994ea70ba86fc704652c6a5c8bd661847c6d947f5c6d50"
   },
-  "updatedAt": "2026-11-12T10:19:54+09:00"
+  "updatedAt": "2026-11-12T10:20:36+09:00"
 }
