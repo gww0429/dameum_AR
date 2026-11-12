@@ -120,6 +120,8 @@ table.t th.grip, table.t td.grip { padding: 0 var(--s2); }
 .inp.err { border-color: var(--danger); }
 .inp.sm { height: 28px; padding: 0 var(--s2); }
 .inp.numr { text-align: right; font-variant-numeric: tabular-nums; }
+textarea.inp[rows="2"] { min-height: 52px; }
+textarea.inp[rows="3"] { min-height: 72px; }
 textarea.inp { height: auto; min-height: 88px; padding: 6px var(--s3); resize: vertical; line-height: 20px; }
 select.inp { appearance: none; -webkit-appearance: none; padding-right: 32px; cursor: pointer;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238B95A1' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");

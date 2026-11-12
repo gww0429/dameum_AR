@@ -229,6 +229,7 @@ body.bgimg .homev { background: transparent; }
 /* 「미션 성공」 시트(D3-5): 제목 → 8 → 성공 안내 문구 → 24 → 확인 */
 .okonly #giftTitle { margin-top: 12px; }
 #giftNote { margin-top: 8px; overflow-wrap: anywhere; }
+#giftNote, #giftDesc, #giftClaimTxt { white-space: pre-line; overflow-wrap: anywhere; } /* v3.2: 설정에서 넣은 줄바꿈 그대로 */
 .okonly #giftOk { margin-top: 24px; }
 /* V8 한 개 수령 머리줄(D3-8): 「선물」 + 사은품 제목, 아래 24 */
 .kv.one { margin: 0 0 24px; }

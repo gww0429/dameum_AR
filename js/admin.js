@@ -2,14 +2,14 @@
    편집 중 내용은 이 PC 브라우저 IndexedDB(dameum_ar_admin)에 자동 저장한다. */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { derive, deriveHome, validHex, DEFAULT_MAIN, DEFAULT_HOME_BG, PRESET_REP, avgBottom } from './theme.js?v=3.1';
-import { sha256Hex, isoNow } from './storage.js?v=3.1';
-import { loadModel, deg, PLACEMENT_DEFAULT } from './ar.js?v=3.1';
-import { DRAG_SAFE, clampDragY, defaultGuide } from './missions.js?v=3.1';
-import { toGlb, MODEL_ACCEPT, MODEL_FMT_LABEL } from './convert.js?v=3.1';
-import { GitHub, gitBlobSha, loadSettings, saveSettings, clearSettings, validRepo, siteUrl, errorInfo } from './github.js?v=3.1';
-import { normalizeConfig, normalizeMission, GUIDE_MAX, SCHEMA, BG_PRESETS, EFFECTS, BUILTIN_MODELS, builtinModelPath, isBuiltin, builtinUrl, SUCCESS_NOTE_MAX } from './config.js?v=3.1';
-import { IMG_SPECS, SRC_MAX, decodeImage, openImageEditor } from './imageEditor.js?v=3.1';
+import { derive, deriveHome, validHex, DEFAULT_MAIN, DEFAULT_HOME_BG, PRESET_REP, avgBottom } from './theme.js?v=3.2';
+import { sha256Hex, isoNow } from './storage.js?v=3.2';
+import { loadModel, deg, PLACEMENT_DEFAULT } from './ar.js?v=3.2';
+import { DRAG_SAFE, clampDragY, defaultGuide } from './missions.js?v=3.2';
+import { toGlb, MODEL_ACCEPT, MODEL_FMT_LABEL } from './convert.js?v=3.2';
+import { GitHub, gitBlobSha, loadSettings, saveSettings, clearSettings, validRepo, siteUrl, errorInfo } from './github.js?v=3.2';
+import { normalizeConfig, normalizeMission, GUIDE_MAX, SCHEMA, BG_PRESETS, EFFECTS, BUILTIN_MODELS, builtinModelPath, isBuiltin, builtinUrl, SUCCESS_NOTE_MAX } from './config.js?v=3.2';
+import { IMG_SPECS, SRC_MAX, decodeImage, openImageEditor } from './imageEditor.js?v=3.2';
 
 /* ───────── 기본값 ───────── */
 const MB = 1024 * 1024;
@@ -1142,8 +1142,9 @@ function giftFields(g, base, onDone) {
       onClear: async () => { await dropFile(g.image); await Orig.del(stripExt(g.image)); g.image = ''; changed(); onDone(); }
     }), g.image ? null : help('비우면 기본 선물 상자 그림이 보입니다'))),
     field('제목', input(g.title, (v) => { g.title = v; changed(); }, { max: 40, ph: '예: 스티커 1장' })),
-    field('설명', input(g.description, (v) => { g.description = v; changed(); }, { max: 80 })),
-    field('수령 안내', input(g.claimNote, (v) => { g.claimNote = v; changed(); }, { max: 60, ph: '예: B-12 부스에서 선물 상자를 보여 주세요' }), { helpEl: help('비우면 그 줄이 관람객 화면에 보이지 않습니다.') })
+    // v3.2: 긴 글 칸은 여러 줄 입력(Enter = 줄바꿈). 관람객 화면도 줄바꿈 그대로 보인다.
+    field('설명', textarea(g.description, (v) => { g.description = v; changed(); }, { max: 80, rows: 3 })),
+    field('수령 안내', textarea(g.claimNote, (v) => { g.claimNote = v; changed(); }, { max: 60, rows: 2, ph: '예: B-12 부스에서 선물 상자를 보여 주세요' }), { helpEl: help('비우면 그 줄이 관람객 화면에 보이지 않습니다.') })
   ];
 }
 function tabGift(p, form) {
@@ -1157,7 +1158,7 @@ function tabGift(p, form) {
   if (g.enabled) rest = giftFields(g, 'gift-' + p.id, () => render());
   else {
     const cnt = h('span', { class: 'cnt-r' }, `${p.successNote.length} / ${SUCCESS_NOTE_MAX}`);
-    rest = [field('성공 안내 문구', input(p.successNote, (v) => { p.successNote = v; cnt.textContent = `${v.length} / ${SUCCESS_NOTE_MAX}`; changed(); }, { max: SUCCESS_NOTE_MAX }),
+    rest = [field('성공 안내 문구', textarea(p.successNote, (v) => { p.successNote = v; cnt.textContent = `${v.length} / ${SUCCESS_NOTE_MAX}`; changed(); }, { max: SUCCESS_NOTE_MAX, rows: 3 }),
       { count: cnt, helpEl: help('미션을 성공하면 「미션 성공」과 이 문구만 보입니다. 스탬프 투어 완료 개수에는 들어갑니다.') })];
   }
   form.append(section('사은품 시트', {}, top, rest));
