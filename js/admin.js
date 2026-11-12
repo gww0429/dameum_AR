@@ -2,16 +2,16 @@
    편집 중 내용은 이 PC 브라우저 IndexedDB(dameum_ar_admin)에 자동 저장한다. */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { derive, deriveHome, validHex, DEFAULT_MAIN, DEFAULT_HOME_BG, PRESET_REP, avgBottom } from './theme.js?v=3.7';
-import { sha256Hex, isoNow } from './storage.js?v=3.7';
-import { loadModel, deg, PLACEMENT_DEFAULT } from './ar.js?v=3.7';
-import { DRAG_SAFE, clampDragY, defaultGuide } from './missions.js?v=3.7';
-import { toGlb, MODEL_ACCEPT, MODEL_FMT_LABEL } from './convert.js?v=3.7';
-import { compressGlb } from './compress.js?v=3.7';
-import { GitHub, gitBlobSha, loadSettings, saveSettings, clearSettings, validRepo, siteUrl, errorInfo } from './github.js?v=3.7';
-import { verifyPassword, seal, unseal, fetchVault, VAULT_PATH } from './vault.js?v=3.7';
-import { normalizeConfig, normalizeMission, GUIDE_MAX, SCHEMA, BG_PRESETS, EFFECTS, BUILTIN_MODELS, builtinModelPath, isBuiltin, builtinUrl, SUCCESS_NOTE_MAX } from './config.js?v=3.7';
-import { IMG_SPECS, SRC_MAX, decodeImage, openImageEditor } from './imageEditor.js?v=3.7';
+import { derive, deriveHome, validHex, DEFAULT_MAIN, DEFAULT_HOME_BG, PRESET_REP, avgBottom } from './theme.js?v=3.8';
+import { sha256Hex, isoNow } from './storage.js?v=3.8';
+import { loadModel, deg, PLACEMENT_DEFAULT } from './ar.js?v=3.8';
+import { DRAG_SAFE, clampDragY, defaultGuide } from './missions.js?v=3.8';
+import { toGlb, MODEL_ACCEPT, MODEL_FMT_LABEL } from './convert.js?v=3.8';
+import { compressGlb } from './compress.js?v=3.8';
+import { GitHub, gitBlobSha, loadSettings, saveSettings, clearSettings, validRepo, siteUrl, errorInfo } from './github.js?v=3.8';
+import { verifyPassword, seal, unseal, fetchVault, VAULT_PATH } from './vault.js?v=3.8';
+import { normalizeConfig, normalizeMission, GUIDE_MAX, SCHEMA, BG_PRESETS, EFFECTS, BUILTIN_MODELS, builtinModelPath, isBuiltin, builtinUrl, SUCCESS_NOTE_MAX } from './config.js?v=3.8';
+import { IMG_SPECS, SRC_MAX, decodeImage, openImageEditor } from './imageEditor.js?v=3.8';
 
 /* ───────── 기본값 ───────── */
 const MB = 1024 * 1024;
@@ -1253,6 +1253,9 @@ async function tryUnlock(pw) {
   if (!A.gh.token) {
     const v = await fetchVault();
     if (v) { try { A.gh = await unseal(pw, v); saveSettings(A.gh); } catch (e) { console.warn('보관된 접근 키를 풀지 못했습니다', e); } }
+  } else {
+    // v3.8: 이 PC에 접근 키가 있으면 보관된 키를 지금 비밀번호로 다시 맞춰 둔다(비밀번호를 바꿨을 때 자동 갱신, 같으면 아무것도 안 함)
+    storeVault().then((r) => { if (r === 'saved') toast('다른 PC용 보관 키를 새 비밀번호로 갱신했습니다'); }).catch((e) => console.warn('보관 키 갱신 실패', e));
   }
   return true;
 }
