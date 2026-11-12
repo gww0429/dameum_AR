@@ -2,27 +2,30 @@
    편집 중 내용은 이 PC 브라우저 IndexedDB(dameum_ar_admin)에 자동 저장한다. */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { derive, validHex, DEFAULT_MAIN } from './theme.js';
-import { sha256Hex, isoNow } from './storage.js';
-import { loadModel, deg, PLACEMENT_DEFAULT } from './ar.js';
-import { DRAG_SAFE, clampDragY } from './missions.js';
-import { toGlb, MODEL_ACCEPT, MODEL_FMT_LABEL } from './convert.js';
-import { GitHub, gitBlobSha, loadSettings, saveSettings, clearSettings, validRepo, siteUrl, errorInfo } from './github.js';
+import { derive, deriveHome, validHex, DEFAULT_MAIN, DEFAULT_HOME_BG } from './theme.js?v=2';
+import { sha256Hex, isoNow } from './storage.js?v=2';
+import { loadModel, deg, PLACEMENT_DEFAULT } from './ar.js?v=2';
+import { DRAG_SAFE, clampDragY, defaultGuide } from './missions.js?v=2';
+import { toGlb, MODEL_ACCEPT, MODEL_FMT_LABEL } from './convert.js?v=2';
+import { GitHub, gitBlobSha, loadSettings, saveSettings, clearSettings, validRepo, siteUrl, errorInfo } from './github.js?v=2';
+import { normalizeConfig, normalizeMission, GUIDE_MAX } from './config.js?v=2';
+import { IMG_SPECS, SRC_MAX, decodeImage, openImageEditor } from './imageEditor.js?v=2';
 
 /* ───────── 기본값 ───────── */
 const MB = 1024 * 1024;
 const GLB_WARN = 15 * MB, FILE_MAX = 50 * MB, POSTER_WARN = 20;
-const CLEAN = ['assets/posters/', 'assets/models/', 'assets/gifts/'];
+const CLEAN = ['assets/posters/', 'assets/models/', 'assets/gifts/', 'assets/brand/']; // v2: 안 쓰게 된 v1 로고·대표 이미지도 정리
 const MISSION_LABEL = { tap: '터치 N회', drag: '드래그 앤 드롭', hold: '길게 누르기', rotate: '돌려 보기', find: '숨은 아이템 찾기', quiz: '퀴즈', none: '미션 없음' };
 const MISSION_DEFAULT = {
-  tap: () => ({ type: 'tap', count: 5 }),
-  drag: () => ({ type: 'drag', target: { x: DRAG_SAFE.defX, y: DRAG_SAFE.defY }, icon: '' }),
-  hold: () => ({ type: 'hold', seconds: 2 }),
-  rotate: () => ({ type: 'rotate', marker: 'back', icon: '' }),
-  find: () => ({ type: 'find', count: 3, icon: '' }),
+  tap: () => ({ type: 'tap', count: 5, guide: '' }),
+  drag: () => ({ type: 'drag', target: { x: DRAG_SAFE.defX, y: DRAG_SAFE.defY }, icon: '', guide: '' }),
+  hold: () => ({ type: 'hold', seconds: 2, guide: '' }),
+  rotate: () => ({ type: 'rotate', marker: 'back', icon: '', guide: '' }),
+  find: () => ({ type: 'find', count: 3, icon: '', guide: '' }),
   quiz: () => ({ type: 'quiz', mode: 'choice', question: '', options: ['', ''], answer: 0 }),
   none: () => ({ type: 'none' })
 };
+const NAME_HELP = '선물 상자·직원 확인 화면에서 관람객에게 보이는 이름으로 지어 주세요';
 const MARKERS = [['front', '앞'], ['back', '뒤'], ['left', '왼쪽'], ['right', '오른쪽'], ['up', '위'], ['down', '아래']];
 const rid = (n = 6) => { const c = 'abcdefghijklmnopqrstuvwxyz0123456789'; let s = ''; const a = crypto.getRandomValues(new Uint8Array(n)); a.forEach((v) => { s += c[v % c.length]; }); return s; };
 const pad = (n) => String(n).padStart(2, '0');
@@ -34,8 +37,8 @@ const clone = (o) => JSON.parse(JSON.stringify(o));
 
 function blankConfig() {
   return {
-    schema: 1, projectId: `evt-${ymd()}-${rid(6)}`, projectName: '',
-    home: { logo: '', title: '', intro: '', heroImage: '', mainColor: DEFAULT_MAIN, startLabel: '', showPosterList: true },
+    schema: 2, projectId: `evt-${ymd()}-${rid(6)}`, projectName: '',
+    home: { background: DEFAULT_HOME_BG, image: '', mainColor: DEFAULT_MAIN, startLabel: '' },
     mindFile: 'assets/targets.mind', posters: [],
     stampTour: { enabled: false, gift: { image: '', title: '', description: '', claimNote: '' } },
     staff: { codeHash: '' }, updatedAt: ''
@@ -43,13 +46,14 @@ function blankConfig() {
 }
 function blankMeta() { return { files: {}, needMind: false, publishedSig: '', publishedAt: '', drafts: {} }; }
 
-/* ───────── IndexedDB ───────── */
+/* ───────── IndexedDB ─────────
+   kv: 편집 상태 · files: 발행할 파일 · orig(v2): 이미지 편집기 원본과 마지막 배치(이 PC에만, 발행하지 않음) */
 const DB = {
   db: null,
   open() {
     return new Promise((res, rej) => {
-      const r = indexedDB.open('dameum_ar_admin', 1);
-      r.onupgradeneeded = () => { const d = r.result; if (!d.objectStoreNames.contains('kv')) d.createObjectStore('kv'); if (!d.objectStoreNames.contains('files')) d.createObjectStore('files'); };
+      const r = indexedDB.open('dameum_ar_admin', 2);
+      r.onupgradeneeded = () => { const d = r.result; ['kv', 'files', 'orig'].forEach((n) => { if (!d.objectStoreNames.contains(n)) d.createObjectStore(n); }); };
       r.onsuccess = () => { DB.db = r.result; res(); };
       r.onerror = () => rej(r.error);
     });
@@ -66,6 +70,14 @@ const DB = {
   clear: (store) => DB.tx(store, 'readwrite', (s) => s.clear()),
   keys: (store) => DB.tx(store, 'readonly', (s) => s.getAllKeys())
 };
+/* 편집기 원본 저장소 (키 = 확장자를 뺀 저장 경로, 예: assets/brand/home) */
+const Orig = {
+  get: async (k) => { try { return DB.db ? await DB.get('orig', k) : null; } catch (_) { return null; } },
+  put: async (k, v) => { try { if (DB.db) await DB.put('orig', k, v); } catch (err) { console.warn('원본 저장 실패', err); } },
+  del: async (k) => { try { if (DB.db && k) await DB.del('orig', k); } catch (_) {} },
+  clear: async () => { try { if (DB.db) await DB.clear('orig'); } catch (_) {} }
+};
+const stripExt = (p) => String(p || '').replace(/\.[a-z0-9]+$/i, '');
 
 /* ───────── 상태 ───────── */
 const A = {
@@ -176,7 +188,7 @@ async function putFile(path, blob, info = {}) {
   if (A.urls.has(path)) { URL.revokeObjectURL(A.urls.get(path)); A.urls.delete(path); }
   A.blobs.set(path, blob);
   A.meta.files[path] = { name: info.name || path.split('/').pop(), size: blob.size, v: rid(4), anims: info.anims ?? null, failed: !!info.failed,
-    from: info.from || null, missing: info.missing && info.missing.length ? info.missing : null };
+    from: info.from || null, missing: info.missing && info.missing.length ? info.missing : null, w: info.w || null, h: info.h || null };
   await DB.put('files', path, blob);
 }
 async function dropFile(path) {
@@ -251,6 +263,87 @@ function fileField({ path, kind = 'image', required, onFile, onClear, warn, erro
   return wrap;
 }
 
+/* 규격 이미지 칸 (12-F-6 「규격 이미지」 변형): 고르거나 끌어 놓으면 저장 전에 이미지 편집기(12-F-11)를 연다.
+   specKey: home | gift | icon · base: 확장자를 뺀 저장 경로(출력 형식에 따라 .png/.jpg) */
+const kbTxt = (b) => (b >= MB ? (b / MB).toFixed(1) + 'MB' : Math.max(1, Math.round(b / 1024)) + 'KB');
+const editorUi = () => ({ h, btn, iconBtn, icon, help, seg, colorField });
+function specField({ specKey, path, base, onSaved, onClear }) {
+  const spec = IMG_SPECS[specKey];
+  const picker = h('input', { type: 'file', accept: 'image/png,image/jpeg', hidden: true });
+  const wrap = h('div');
+  let err = '', busy = false;
+  const fail = (m) => { busy = false; err = m; draw(); };
+  const openEd = (img, srcBlob, place, bg) => openImageEditor({
+    spec, img, place, bg, ui: editorUi(),
+    onApply: async (blob, info) => {
+      const np = `${base}.${info.fmt}`;
+      if (path && path !== np) await dropFile(path);
+      await putFile(np, blob, { name: np.split('/').pop(), w: info.w, h: info.h });
+      if (srcBlob) await Orig.put(base, { blob: srcBlob, place: info.place, bg: info.bg });
+      onSaved(np);
+    }
+  });
+  const take = async (list) => {
+    const file = [...(list || [])][0];
+    if (!file || busy) return;
+    if (!isImg(file)) { fail('JPG·PNG 파일만 올릴 수 있습니다'); return; }
+    if (file.size > SRC_MAX) { fail('20MB 이하 이미지를 올려 주세요'); return; }
+    busy = true; err = ''; draw();
+    let img;
+    try { img = await decodeImage(file); } catch (_) { fail('이미지를 읽지 못했습니다'); return; } // 읽지 못하면 편집기를 열지 않는다
+    busy = false; draw();
+    openEd(img, file, null, null);
+  };
+  const edit = async () => {
+    if (busy) return;
+    busy = true; err = ''; draw();
+    const rec = await Orig.get(base);
+    try {
+      if (rec && rec.blob) { const img = await decodeImage(rec.blob); busy = false; draw(); openEd(img, rec.blob, rec.place, rec.bg); return; }
+      // 원본이 없으면(다른 PC·사이트에서 불러옴) 지금 저장된 이미지를 원본으로 연다
+      const img = await decodeImage(urlOf(path));
+      busy = false; draw();
+      openEd(img, A.blobs.get(path) || null, null, null);
+    } catch (_) { fail('이미지를 읽지 못했습니다'); }
+  };
+  picker.addEventListener('change', () => { take(picker.files); picker.value = ''; });
+  const draw = () => {
+    wrap.replaceChildren();
+    const meta = path ? A.meta.files[path] : null;
+    if (busy) {
+      wrap.append(h('div', { class: 'drop', 'aria-busy': 'true' }, h('span', { class: 'spin14' }), '이미지를 불러오는 중…'));
+    } else if (path && (meta || A.blobs.has(path))) {
+      const name = (meta && meta.name) || path.split('/').pop();
+      const size = meta ? meta.size : (A.blobs.get(path) || {}).size || 0;
+      const fmt = /\.png$/i.test(path) ? 'PNG' : 'JPG';
+      const w = meta && meta.w, hh = meta && meta.h;
+      if (meta && !w) { // v1 에서 올린 이미지: 픽셀 크기를 읽어 둔다(발행 내용은 바뀌지 않음)
+        decodeImage(urlOf(path)).then((im) => { meta.w = im.naturalWidth; meta.h = im.naturalHeight; if (wrap.isConnected) draw(); }).catch(() => {});
+      }
+      wrap.append(h('div', { class: 'file' },
+        h('span', { class: 'ft' }, h('img', { alt: '', src: urlOf(path) })),
+        h('div', { class: 'nm' }, h('div', { class: 'n ell', title: name }, name), h('div', { class: 'sz' }, (w ? `${w}×${hh} · ` : '') + `${fmt} · ${kbTxt(size)}`)),
+        btn('편집', () => edit(), { kind: 'ghost', size: 'sm' }),
+        btn('바꾸기', () => picker.click(), { kind: 'ghost', size: 'sm' }),
+        btn('지우기', () => onClear && onClear(), { kind: 'ghost', size: 'sm' })));
+      const off = w && (w !== spec.w || hh !== spec.h || (spec.pngOnly && fmt !== 'PNG'));
+      if (!err && off) wrap.append(help('규격과 다릅니다 · 편집으로 맞출 수 있습니다'));
+    } else {
+      const d = h('div', { class: 'drop' + (err ? ' err' : ''), role: 'button', tabindex: '0', onclick: () => picker.click(),
+        onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); picker.click(); } } },
+        '파일을 끌어 놓거나 ', h('span', { class: 'link' }, '선택'), h('span', { class: 'fmt num' }, spec.line));
+      d.addEventListener('dragover', (e) => { e.preventDefault(); d.classList.add('over'); });
+      d.addEventListener('dragleave', () => d.classList.remove('over'));
+      d.addEventListener('drop', (e) => { e.preventDefault(); d.classList.remove('over'); take(e.dataTransfer.files); });
+      wrap.append(d);
+    }
+    if (err) wrap.append(help(err, 'error'));
+    wrap.append(picker);
+  };
+  draw();
+  return wrap;
+}
+
 /* ───────── 저장 · 발행 상태 ───────── */
 function sig() {
   const f = Object.entries(A.meta.files).map(([p, m]) => p + ':' + m.v).sort().join('|');
@@ -280,7 +373,7 @@ function pubState() {
 function markMind() { if (A.cfg.posters.length) A.meta.needMind = true; }
 
 /* ───────── 헤더 · 사이드바 ───────── */
-function projName() { return (A.cfg.projectName || '').trim() || (A.cfg.home.title || '').trim() || '새 프로젝트'; }
+function projName() { return (A.cfg.projectName || '').trim() || '새 프로젝트'; }
 function renderHeader() {
   const hd = $('hdr');
   const st = pubState();
@@ -363,9 +456,9 @@ function renderPvSeg() {
       onclick: () => { A.pvUser = v; renderPvSeg(); sendPreview(); } }, l)));
 }
 function resolvedConfig() {
-  const c = clone(A.cfg);
+  const c = normalizeConfig(A.cfg);
   const r = (p) => (p ? urlOf(p) : p);
-  c.home.logo = r(c.home.logo); c.home.heroImage = r(c.home.heroImage);
+  c.home.image = r(c.home.image);
   c.posters.forEach((p) => {
     p.image = r(p.image); p.model = p.model ? r(p.model) : null;
     if (p.gift) p.gift.image = r(p.gift.image);
@@ -413,52 +506,62 @@ window.addEventListener('resize', () => { if (!$('editWrap').hidden) layoutPhone
 function viewHome(ph, form) {
   pageHeader(ph, '홈 꾸미기');
   const hm_ = A.cfg.home;
-  const setH = (k) => (v) => { hm_[k] = v; changed(); };
-  const imgField = (key, base) => fileField({
-    path: hm_[key], kind: 'image',
-    onFile: async (file) => { const p = `assets/brand/${base}.${extOf(file)}`; if (hm_[key] && hm_[key] !== p) await dropFile(hm_[key]); await putFile(p, file, { name: file.name }); hm_[key] = p; changed(); render(); },
-    onClear: async () => { await dropFile(hm_[key]); hm_[key] = ''; changed(); render(); }
-  });
+  let mainField = null;
+  const bgField = colorField(hm_.background, (v) => { hm_.background = v; changed(); if (mainField) mainField.repaint(); },
+    { plain: true, fallback: DEFAULT_HOME_BG, label: '배경색' });
+  mainField = colorField(hm_.mainColor, (v) => { hm_.mainColor = v; changed(); }, { bg: () => hm_.background });
+  const imgHost = h('div', null, specField({
+    specKey: 'home', path: hm_.image, base: 'assets/brand/home',
+    onSaved: (np) => { hm_.image = np; changed(); render(); },
+    onClear: async () => { await dropFile(hm_.image); await Orig.del('assets/brand/home'); hm_.image = ''; changed(); render(); }
+  }), hm_.image ? null : help('홈 이미지가 없으면 관람객 홈에 버튼만 보입니다'));
+  const cnt = h('span', { class: 'cnt-r' }, `${(hm_.startLabel || '').length} / 20`);
   form.append(section('홈 화면', {},
-    field('로고', imgField('logo', 'logo')),
-    field('대표 이미지', imgField('heroImage', 'hero')),
-    field('제목', input(hm_.title, setH('title'), { ph: 'AR 전시', max: 60 })),
-    field('소개 문구', textarea(hm_.intro, setH('intro'), { max: 300, rows: 3 })),
-    field('시작 버튼 문구', input(hm_.startLabel, setH('startLabel'), { ph: 'AR 시작하기', max: 20 }),
-      { helpEl: help('10자 이내를 권장합니다. 길면 버튼 안에서 두 줄로 나뉩니다(최대 20자).') }),
-    field('메인 색', colorField(hm_.mainColor, (v) => { hm_.mainColor = v; changed(); })),
-    h('div', { class: 'trow', style: 'margin-top:16px' },
-      h('div', null, h('div', { class: 'w5' }, '포스터 목록 노출'), h('div', { class: 'h' }, '홈에 찾아볼 포스터 목록과 완료 표시를 보여 줍니다')),
-      toggle(hm_.showPosterList !== false, () => { hm_.showPosterList = hm_.showPosterList === false; changed(); render(); }))));
+    field('배경색', bgField),
+    field('홈 이미지', imgHost),
+    field('메인 색', mainField),
+    field('시작 버튼 문구', input(hm_.startLabel, (v) => { hm_.startLabel = v; cnt.textContent = `${v.length} / 20`; changed(); }, { ph: 'AR 시작하기', max: 20 }),
+      { count: cnt, helpEl: help('10자 이내를 권장합니다. 길면 버튼 안에서 두 줄로 나뉩니다(최대 20자).') })));
 }
 
-/* 메인 색 입력 (12-F-8) */
-function colorField(value, onChange) {
+/* 색 입력 (12-F-8). plain = 배경색 변형(견본 + HEX만), sm = 편집기 안 작은 크기.
+   bg 가 있으면(메인 색 칸) 홈 버튼이 배경에 묻혀 흑/백으로 바뀌는지도 같은 도움말 한 줄에 알린다(AR1.3 3-3 (E)). */
+function colorField(value, onChange, { plain = false, sm = false, bg = null, fallback = DEFAULT_MAIN, label } = {}) {
   const wrap = h('div');
-  let hex = validHex(value) ? value.toUpperCase() : DEFAULT_MAIN;
-  const picker = h('input', { type: 'color', 'aria-label': '색 고르기' }); picker.value = hex.toLowerCase();
-  const sw = h('label', { class: 'cswatch', title: '색 고르기' }, picker);
-  const txt = h('input', { class: 'left', maxlength: '7', 'aria-label': 'HEX 값' });
+  let hex = validHex(value) ? value.toUpperCase() : fallback;
+  let ok = true;
+  const picker = h('input', { type: 'color', 'aria-label': (label ? label + ' ' : '') + '색 고르기' }); picker.value = hex.toLowerCase();
+  const sw = h('label', { class: 'cswatch' + (sm ? ' sm' : ''), title: '색 고르기' }, picker);
+  const txt = h('input', { class: 'left', maxlength: '7', 'aria-label': (label ? label + ' ' : '') + 'HEX 값' });
   txt.value = hex.slice(1);
-  const pre = h('div', { class: 'pre h32', style: 'flex:none;width:140px' }, h('span', null, '#'), txt);
-  const prev = h('div', { class: 'cprev' });
+  const pre = h('div', { class: 'pre' + (sm ? '' : ' h32'), style: `flex:none;width:${sm ? 120 : 140}px` }, h('span', null, '#'), txt);
+  const prev = plain ? null : h('div', { class: 'cprev' });
   const msg = h('div');
-  const paint = (ok) => {
+  const paint = () => {
     sw.style.background = hex;
+    pre.classList.toggle('err', !ok);
+    if (plain) { msg.replaceChildren(!ok ? help('#과 6자리 16진수로 입력하세요', 'error') : ''); return; }
     const t = derive(hex);
     prev.replaceChildren(
+      h('span', { class: 'meta' }, '버튼'),
       h('span', { class: 'btn', style: `background:${t.solid};color:${t.on};border-color:${t.bdLight}` }, 'AR 시작하기'),
+      h('span', { class: 'meta' }, '글자'),
       h('span', { class: 'txt', style: `color:${t.text}` }, '링크 글자'));
-    pre.classList.toggle('err', !ok);
-    msg.replaceChildren(!ok ? help('#과 6자리 16진수로 입력하세요', 'error') : t.adjusted ? help(`글자가 잘 보이도록 버튼 바탕을 ${t.solid}으로 씁니다`) : '');
+    const notes = [];
+    if (t.adjusted) notes.push(`글자가 잘 보이도록 버튼 바탕을 ${t.solid}으로 씁니다`);
+    if (bg) { const hb = deriveHome(bg(), hex); if (hb.swap) notes.push(`배경색과 버튼 색이 비슷해 홈 버튼은 ${hb.solid === '#000000' ? '검정' : '흰색'}으로 보입니다`); }
+    msg.replaceChildren(!ok ? help('#과 6자리 16진수로 입력하세요', 'error') : notes.length ? help(notes.join(' · ')) : '');
   };
   txt.addEventListener('input', () => {
     const v = '#' + txt.value.replace(/^#/, '').trim();
-    if (validHex(v)) { hex = v.toUpperCase(); picker.value = hex.toLowerCase(); paint(true); onChange(hex); } else paint(false);
+    ok = validHex(v);
+    if (ok) { hex = v.toUpperCase(); picker.value = hex.toLowerCase(); paint(); onChange(hex); } else paint();
   });
-  picker.addEventListener('input', () => { hex = picker.value.toUpperCase(); txt.value = hex.slice(1); paint(true); onChange(hex); });
-  wrap.append(h('div', { class: 'colorrow' }, sw, pre), prev, msg);
-  paint(true);
+  picker.addEventListener('input', () => { hex = picker.value.toUpperCase(); txt.value = hex.slice(1); ok = true; paint(); onChange(hex); });
+  wrap.append(...[h('div', { class: 'colorrow' }, sw, pre), prev, msg].filter(Boolean));
+  wrap.repaint = paint;
+  wrap.setValue = (v) => { if (validHex(v)) { hex = v.toUpperCase(); txt.value = hex.slice(1); picker.value = hex.toLowerCase(); ok = true; paint(); } };
+  paint();
   return wrap;
 }
 
@@ -469,7 +572,7 @@ function viewPosters(ph, host) {
   pageHeader(ph, '포스터', { right: list.length ? btn('포스터 추가', () => openAddPanel(), { kind: 'primary', ic: 'plus' }) : null });
   if (!list.length) {
     host.append(h('div', { class: 'empty' }, h('p', { class: 'w5' }, '아직 포스터가 없습니다'),
-      h('p', { class: 'd' }, '포스터를 추가하면 관람객 홈의 포스터 목록과 인식 파일에 들어갑니다.'),
+      h('p', { class: 'd' }, '포스터를 추가하면 인식 파일에 들어갑니다.'),
       h('div', { class: 'a' }, btn('포스터 추가', () => openAddPanel(), { kind: 'primary', ic: 'plus' }))));
     return;
   }
@@ -521,7 +624,7 @@ function deletePoster(id) {
       const paths = [p.image, p.model, p.gift && p.gift.image, p.mission && p.mission.icon];
       const dr = A.meta.drafts[id] || {};
       Object.values(dr).forEach((m) => paths.push(m && m.icon));
-      for (const x of new Set(paths.filter(Boolean))) await dropFile(x);
+      for (const x of new Set(paths.filter(Boolean))) { await dropFile(x); await Orig.del(stripExt(x)); }
       delete A.meta.drafts[id];
       A.meta.needMind = A.cfg.posters.length > 0;
       changed();
@@ -567,7 +670,7 @@ function openAddPanel() {
   };
   pick.addEventListener('change', () => { take(pick.files[0]); pick.value = ''; });
   const nameIn = input('', (v) => { st.name = v; addBtn.disabled = !(st.name.trim() && st.file); }, { max: 40, ph: '예: 포스터 01' });
-  body.append(field('이름', nameIn), field('포스터 이미지', fileWrap), pick);
+  body.append(field('이름', nameIn, { helpEl: help(NAME_HELP) }), field('포스터 이미지', fileWrap), pick);
   drawFile();
   const doAdd = async () => {
     const id = 'p' + rid(6);
@@ -575,7 +678,7 @@ function openAddPanel() {
     await putFile(path, st.file, { name: st.file.name });
     A.cfg.posters.push({
       id, name: st.name.trim(), image: path, model: null, placement: 'front', scale: 0.6, position: [...PLACEMENT_DEFAULT.front], rotation: [0, 0, 0],
-      animation: false, spin: false, description: '', mission: MISSION_DEFAULT.tap(), gift: { image: '', title: '', description: '', claimNote: '' }
+      animation: false, spin: false, mission: MISSION_DEFAULT.tap(), gift: { image: '', title: '', description: '', claimNote: '' }
     });
     A.meta.needMind = true;
     closeAddPanel();
@@ -595,7 +698,7 @@ function viewPoster(ph, form) {
   const p = curPoster();
   if (!p) { A.view = 'posters'; render(); return; }
   const idx = A.cfg.posters.indexOf(p) + 1;
-  const tabs = h('div', { class: 'tabs', role: 'tablist' }, [['basic', '기본 정보'], ['place', '3D 배치'], ['mission', '설명·미션'], ['gift', '사은품']].map(([v, l]) =>
+  const tabs = h('div', { class: 'tabs', role: 'tablist' }, [['basic', '기본 정보'], ['place', '3D 배치'], ['mission', '미션'], ['gift', '사은품']].map(([v, l]) =>
     h('button', { class: A.tab === v ? 'on' : '', role: 'tab', 'aria-selected': String(A.tab === v), type: 'button', onclick: () => { A.tab = v; A.pvUser = null; render(); } }, l)));
   pageHeader(ph, p.name || '이름 없는 포스터', {
     back: { label: '포스터', onClick: () => go('posters') }, tabs, tagEl: tag(idx + '번'),
@@ -610,7 +713,7 @@ function tabBasic(p, form) {
   const nameIn = input(p.name, (v) => { p.name = v; changed(); const t = document.querySelector('.phead h1'); if (t) { t.textContent = v || '이름 없는 포스터'; t.title = v; } }, { max: 40 });
   const glbMeta = p.model ? A.meta.files[p.model] : null;
   form.append(section('기본 정보', {},
-    field('이름', nameIn),
+    field('이름', nameIn, { helpEl: help(NAME_HELP) }),
     field('포스터 이미지', h('div', null, fileField({
       path: p.image, kind: 'image', required: true, error: A.err.posterImage === p.id ? '포스터 이미지를 올려 주세요' : '',
       onFile: async (file) => { const np = `assets/posters/poster-${p.id}.${extOf(file)}`; if (p.image && p.image !== np) await dropFile(p.image); await putFile(np, file, { name: file.name }); p.image = np; A.err.posterImage = null; A.meta.needMind = true; changed(); render(); }
@@ -783,14 +886,17 @@ function tabPlace(p, form) {
 }
 
 function tabMission(p, form) {
-  const descCount = h('span', { class: 'cnt-r' }, `${(p.description || '').length} / 300자`);
-  const desc = textarea(p.description, (v) => { p.description = v; descCount.textContent = `${v.length} / 300자`; changed(); }, { max: 300, rows: 4 });
-  form.append(section('설명글', {}, field('설명글', desc, { count: descCount })));
   form.append(section('미션', {}, missionForm(p)));
 }
 function missionForm(p) {
   const m = p.mission || (p.mission = MISSION_DEFAULT.tap());
   const wrap = h('div');
+  /* 안내 문구 칸(퀴즈·없음 제외): 비우면 placeholder 의 기본 문구를 쓴다. 조건값이 바뀌면 placeholder 도 바로 바뀐다. */
+  const hasGuide = ['tap', 'drag', 'hold', 'rotate', 'find'].includes(m.type);
+  if (hasGuide && typeof m.guide !== 'string') m.guide = '';
+  const guideCnt = h('span', { class: 'cnt-r' }, `${(m.guide || '').length} / ${GUIDE_MAX}`);
+  const guideIn = hasGuide ? input(m.guide, (v) => { m.guide = v; guideCnt.textContent = `${v.length} / ${GUIDE_MAX}`; changed(); }, { max: GUIDE_MAX, ph: defaultGuide(m) }) : null;
+  const refreshPh = () => { if (guideIn) guideIn.placeholder = defaultGuide(m); };
   const sel = h('select', { class: 'inp', style: 'width:240px', 'aria-label': '미션 종류' },
     Object.entries(MISSION_LABEL).map(([v, l]) => h('option', { value: v }, l)));
   sel.value = m.type;
@@ -808,15 +914,15 @@ function missionForm(p) {
     const el = input(m[key] ?? def, (v) => {
       const n = Number(v);
       if (!Number.isFinite(n) || n < min || n > max || Math.round(n / step) * step !== n) { el.classList.add('err'); errBox.replaceChildren(help(`${min}~${max} 사이로 입력하세요${step < 1 ? ' (0.5 단위)' : ''}`, 'error')); return; }
-      el.classList.remove('err'); errBox.replaceChildren(); m[key] = n; changed(); renderSideSoon();
+      el.classList.remove('err'); errBox.replaceChildren(); m[key] = n; refreshPh(); changed(); renderSideSoon();
     }, { cls: 'numr', type: 'text' });
     el.style.width = '120px';
     return field(label, h('div', null, h('div', { class: 'unitrow' }, el, h('span', { class: 'help', style: 'margin:0' }, unit)), errBox));
   };
-  const iconField = (label) => field(label, fileField({
-    path: m.icon, kind: 'image',
-    onFile: async (file) => { const np = `assets/gifts/icon-${p.id}-${m.type}.${extOf(file)}`; if (m.icon && m.icon !== np) await dropFile(m.icon); await putFile(np, file, { name: file.name }); m.icon = np; changed(); render(); },
-    onClear: async () => { await dropFile(m.icon); m.icon = ''; changed(); render(); }
+  const iconField = (label) => field(label, specField({
+    specKey: 'icon', path: m.icon, base: `assets/gifts/icon-${p.id}-${m.type}`,
+    onSaved: (np) => { m.icon = np; changed(); render(); },
+    onClear: async () => { await dropFile(m.icon); await Orig.del(stripExt(m.icon)); m.icon = ''; changed(); render(); }
   }));
   switch (m.type) {
     case 'tap': box.append(numField('횟수', 'count', '회', { min: 1, max: 50, step: 1, def: 5 })); break;
@@ -873,8 +979,9 @@ function missionForm(p) {
       }
       break;
     }
-    default: box.append(help('설명글만 보이고 스탬프 투어 집계에서 빠집니다'));
+    default: box.append(help('관람객 화면에는 카드 없이 3D만 보입니다. 스탬프 투어 집계에서 빠집니다.'));
   }
+  if (guideIn) box.append(field('안내 문구', guideIn, { count: guideCnt, helpEl: help('비우면 기본 문구를 씁니다. 횟수를 바꾸면 직접 쓴 문구도 함께 고쳐 주세요.') }));
   wrap.append(box);
   return wrap;
 }
@@ -883,10 +990,10 @@ function renderSideSoon() { clearTimeout(sideT); sideT = setTimeout(renderSide, 
 
 function giftFields(g, base, onDone) {
   return [
-    field('이미지', fileField({
-      path: g.image, kind: 'image',
-      onFile: async (file) => { const np = `assets/gifts/${base}.${extOf(file)}`; if (g.image && g.image !== np) await dropFile(g.image); await putFile(np, file, { name: file.name }); g.image = np; changed(); onDone(); },
-      onClear: async () => { await dropFile(g.image); g.image = ''; changed(); onDone(); }
+    field('이미지', specField({
+      specKey: 'gift', path: g.image, base: `assets/gifts/${base}`,
+      onSaved: (np) => { g.image = np; changed(); onDone(); },
+      onClear: async () => { await dropFile(g.image); await Orig.del(stripExt(g.image)); g.image = ''; changed(); onDone(); }
     })),
     field('제목', input(g.title, (v) => { g.title = v; changed(); }, { max: 40, ph: '예: 스티커 1장' })),
     field('설명', input(g.description, (v) => { g.description = v; changed(); }, { max: 80 })),
@@ -895,7 +1002,7 @@ function giftFields(g, base, onDone) {
 }
 function tabGift(p, form) {
   p.gift = p.gift || { image: '', title: '', description: '', claimNote: '' };
-  form.append(section('사은품 모달', {}, giftFields(p.gift, 'gift-' + p.id, () => render())));
+  form.append(section('사은품 시트', {}, giftFields(p.gift, 'gift-' + p.id, () => render())));
 }
 
 /* ───────── A4 직원 코드·스탬프 투어 ───────── */
@@ -1018,7 +1125,7 @@ function compileMind({ inPublish = false } = {}) {
 function referenced(cfg) {
   const s = new Set();
   const add = (p) => { if (p && typeof p === 'string' && !/^(https?:|blob:|data:)/.test(p)) s.add(p); };
-  add(cfg.home && cfg.home.logo); add(cfg.home && cfg.home.heroImage); add(cfg.mindFile);
+  add(cfg.home && cfg.home.image); add(cfg.mindFile); // v2: 로고·대표 이미지는 참조하지 않는다(불러오지 않고, 발행 때 정리)
   (cfg.posters || []).forEach((p) => { add(p.image); add(p.model); add(p.gift && p.gift.image); add(p.mission && p.mission.icon); });
   add(cfg.stampTour && cfg.stampTour.gift && cfg.stampTour.gift.image);
   return s;
@@ -1026,7 +1133,7 @@ function referenced(cfg) {
 async function resetLocal() {
   A.urls.forEach((u) => URL.revokeObjectURL(u));
   A.urls.clear(); A.blobs.clear();
-  await DB.clear('files'); await DB.clear('kv');
+  await DB.clear('files'); await DB.clear('kv'); await Orig.clear(); // 편집기 원본도 남기지 않는다(데이터 분리)
   A.meta = blankMeta();
   A.err = {}; A.staffEdit = false; A.pid = null;
   if (A.vp) { A.vp.el.remove(); A.vp = null; }
@@ -1046,7 +1153,7 @@ function newProject() {
 }
 function hasEdits() {
   const c = A.cfg, hm_ = c.home || {};
-  return c.posters.length > 0 || !!(hm_.title || hm_.intro || hm_.logo || hm_.heroImage || hm_.startLabel) ||
+  return c.posters.length > 0 || !!(hm_.image || hm_.startLabel) || (hm_.background || DEFAULT_HOME_BG).toUpperCase() !== DEFAULT_HOME_BG ||
     !!(c.staff && c.staff.codeHash) || !!(c.stampTour && c.stampTour.enabled) || (hm_.mainColor || DEFAULT_MAIN).toUpperCase() !== DEFAULT_MAIN;
 }
 function loadFromSite() {
@@ -1069,16 +1176,18 @@ function loadFromSite() {
         for (const p of referenced(cfg)) { const fr = await fetch(p, { cache: 'no-store' }); if (fr.ok) files.set(p, await fr.blob()); }
       }
       if (!cfg || !Array.isArray(cfg.posters) || !cfg.home) throw new Error('설정 형식이 맞지 않습니다');
+      const fromV1 = cfg.schema !== 2;
       await resetLocal();
       const base = blankConfig();
-      A.cfg = { ...base, ...cfg, home: { ...base.home, ...cfg.home }, stampTour: { ...base.stampTour, ...(cfg.stampTour || {}) }, staff: { ...base.staff, ...(cfg.staff || {}) } };
+      A.cfg = normalizeConfig(cfg); // v1(schema 1)이면 v2로 변환. 발행하면 schema 2로 저장된다
+      if (!A.cfg.projectId) A.cfg.projectId = base.projectId;
       for (const [p, b] of files) {
         let info = { name: p.split('/').pop() };
         if (/\.glb$/i.test(p)) { const u = URL.createObjectURL(b); const m = await loadModel(u); URL.revokeObjectURL(u); info = { ...info, anims: m.failed ? 0 : m.clips.length, failed: m.failed }; }
         await putFile(p, b, info);
       }
       A.meta.needMind = A.cfg.posters.length > 0 && !files.has(A.cfg.mindFile);
-      A.meta.publishedSig = sig();
+      A.meta.publishedSig = fromV1 ? '' : sig(); // v1 형식이면 다시 발행해야 v2로 바뀐다
       A.meta.publishedAt = cfg.updatedAt || '';
       await saveNow();
       A.busy = false;
@@ -1108,7 +1217,7 @@ function validate() {
 }
 function commitMessage(d = new Date()) { return `dameum_AR 설정 발행 ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hm(d)}`; }
 async function buildLocalFiles() {
-  const cfg = clone(A.cfg);
+  const cfg = normalizeConfig(A.cfg); // 발행은 언제나 schema 2, 알 수 없는 필드는 뺀다
   cfg.updatedAt = isoNow();
   const keep = referenced(cfg);
   const local = [];
@@ -1164,11 +1273,18 @@ async function boot() {
   let saved = null;
   try { if (DB.db) saved = await DB.get('kv', 'project'); } catch (_) {}
   if (saved && saved.cfg) {
-    A.cfg = saved.cfg; A.meta = { ...blankMeta(), ...saved.meta };
+    // v1 편집 상태도 v2로 변환한다(옛 필드 버림, 기본값 채움). 미션 종류별 초안도 같은 규칙.
+    A.cfg = normalizeConfig(saved.cfg); A.meta = { ...blankMeta(), ...saved.meta };
+    if (!A.cfg.projectId) A.cfg.projectId = blankConfig().projectId;
+    Object.values(A.meta.drafts || {}).forEach((d) => { Object.keys(d || {}).forEach((t) => { d[t] = normalizeMission(d[t]); }); });
     try {
       const keys = await DB.keys('files');
       for (const k of keys) { const b = await DB.get('files', k); if (b) A.blobs.set(k, b); }
     } catch (_) {}
+    // v1 의 로고·대표 이미지 Blob 은 더 이상 참조하지 않으므로 편집 저장소에서 지운다
+    for (const k of [...A.blobs.keys()]) if (k.startsWith('assets/brand/') && k !== A.cfg.home.image) await dropFile(k);
+    Object.keys(A.meta.files).forEach((k) => { if (k.startsWith('assets/brand/') && k !== A.cfg.home.image) delete A.meta.files[k]; });
+    if (saved.cfg.schema !== 2 && DB.db) await saveNow();
   } else {
     A.cfg = blankConfig();
     if (DB.db) await saveNow();

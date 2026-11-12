@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="theme-color" content="#111316">
 <title>AR 전시</title>
-<link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/app.css?v=2">
 <script type="importmap">
 { "imports": {
   "three": "./lib/three/three.module.js",
@@ -21,7 +21,6 @@
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></symbol>
   <symbol id="i-gift" viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="4" rx="1"/><path d="M5 12v8h14v-8M12 8v12M12 8c-2-4-6-4-6-1.5S9 8 12 8zm0 0c2-4 6-4 6-1.5S15 8 12 8z"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
-  <symbol id="i-cube" viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/></symbol>
 </svg>
 
 <!-- 카메라·3D 무대 -->
@@ -39,22 +38,11 @@
   </div>
 </section>
 
-<!-- V1 홈 -->
-<section id="v1" class="scr light" hidden>
-  <div class="scroll">
-    <div class="home" id="homeBody">
-      <img class="logo" id="homeLogo" alt="" hidden>
-      <img class="hero" id="homeHero" alt="" hidden>
-      <h1 class="lg" id="homeTitle"></h1>
-      <p class="md intro" id="homeIntro" hidden></p>
-      <div class="plist" id="homeList" hidden>
-        <div class="shead" style="margin-bottom:4px"><span class="md w6">찾아볼 포스터</span><span class="sm t3 num" id="homeListCount"></span></div>
-        <div id="homeRows"></div>
-      </div>
-    </div>
-  </div>
-  <div class="bar">
-    <p class="note" id="homeNote">카메라를 사용합니다. 영상은 저장되지 않습니다.</p>
+<!-- V1 홈: 배경색 + 홈 이미지 + 버튼 두 개 -->
+<section id="v1" class="scr homev" hidden>
+  <div class="himg"><img id="homeImg" alt="" hidden></div>
+  <div class="hbar">
+    <p class="hnote" id="homeNote" hidden>준비 중인 행사입니다</p>
     <div class="row">
       <button class="abtn secondary" id="homeBox"><svg class="i"><use href="#i-gift"/></svg>선물 상자<span class="pill" id="homeBoxN" hidden>0</span></button>
       <button class="abtn primary wrap2" id="homeStart"><span class="lbl" id="homeStartTxt">AR 시작하기</span></button>
@@ -86,15 +74,15 @@
   </div>
   <div class="mload" id="mload" hidden><div class="spin s20"></div></div>
   <div id="mlayer"></div>
-  <div class="sheet" id="card" hidden></div>
+  <div class="sheet mcard" id="card" hidden></div>
 </section>
 
-<!-- V5 사은품 모달 -->
+<!-- V5 사은품 시트 -->
 <div class="scrim" id="giftScrim" hidden></div>
 <section id="gift" class="scr" hidden>
-  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="giftTitle">
+  <div class="sheet" id="giftSheet" role="dialog" aria-modal="true" aria-labelledby="giftTitle">
     <div class="handle"></div>
-    <div class="body">
+    <div class="body" id="giftBody">
       <div class="xs" id="giftHead" style="margin-top:12px"></div>
       <div class="lg" id="giftTitle" style="margin-top:4px"></div>
       <div class="gimg" id="giftImgBox" hidden><img id="giftImg" alt=""></div>
@@ -106,16 +94,9 @@
   </div>
 </section>
 
-<!-- V6 내 공간에 놓기 -->
-<section id="v6" class="scr dark" hidden>
-  <div id="v6Host" style="position:absolute;inset:0"></div>
-  <div class="topbar"><button class="chip btn" id="v6Back"><svg class="i"><use href="#i-chevL"/></svg>돌아가기</button></div>
-  <div class="notice" id="v6Notice" hidden><span class="chip wide"><span class="ell">이 기기는 바닥 배치를 지원하지 않아요</span></span></div>
-</section>
-
 <!-- V7 선물 상자 -->
 <section id="v7" class="scr light box" hidden>
-  <div class="appbar"><button class="ib" id="boxBack" aria-label="뒤로"><svg class="i"><use href="#i-chevL"/></svg></button><span class="ttl">선물 상자</span><span class="slot"><span class="ptag" id="boxPv" hidden>미리보기</span></span></div>
+  <div class="appbar"><button class="ib back" id="boxBack" aria-label="홈으로"><svg class="i i24"><use href="#i-chevL"/></svg><span class="bl" id="boxBackTxt" hidden>AR</span></button><span class="ttl" id="boxTtl">선물 상자</span><span class="slot" id="boxSlot"><span class="ptag" id="boxPv" hidden>미리보기</span></span></div>
   <div class="scroll"><div class="body" id="boxBody"></div></div>
   <div class="bar"><p class="note" id="boxNote" hidden>수령할 선물이 없습니다</p><button class="abtn primary" id="boxStaff">직원 확인</button></div>
 </section>
@@ -139,6 +120,6 @@ if (location.protocol === 'file:') {
   document.getElementById('v2').hidden = false;
 }
 </script>
-<script type="module" src="js/app.js"></script>
+<script type="module" src="js/app.js?v=2"></script>
 </body>
 </html>

@@ -209,7 +209,7 @@ table.t .r { text-align: right; }
 table.t td.name { color: var(--n900); font-weight: 500; }
 table.t td.acts { padding: 0 var(--s2); }
 table.t td.acts > div { display: flex; justify-content: flex-end; gap: 0; }
-.pthumb { width: 40px; height: 56px; border-radius: var(--r-sm); background: var(--n50); object-fit: cover; display: block; }
+.pthumb { width: 40px; height: 56px; border-radius: var(--r-sm); background: var(--n100); object-fit: contain; display: block; } /* v2.4 12-F-10-1: 잘리지 않게 contain + n100 */
 
 /* 8-5 사이드 패널 · 8-7 모달 · 8-8 확인 */
 .scrim { position: fixed; inset: 0; background: var(--scrim); z-index: 65; }
@@ -266,7 +266,7 @@ table.t td.acts > div { display: flex; justify-content: flex-end; gap: 0; }
 
 /* 12-F-6 파일 칸 */
 .file { border: var(--b-line); border-radius: var(--r-lg); padding: var(--s3); display: flex; align-items: center; gap: var(--s3); }
-.file .ft { width: 48px; height: 48px; border-radius: var(--r-sm); background: var(--n50); display: flex; align-items: center; justify-content: center; font-size: 12px; line-height: 16px; font-weight: 500; color: var(--n500); flex: none; overflow: hidden; }
+.file .ft { width: 48px; height: 48px; border-radius: var(--r-sm); background: var(--n100); display: flex; align-items: center; justify-content: center; font-size: 12px; line-height: 16px; font-weight: 500; color: var(--n500); flex: none; overflow: hidden; }
 .file .ft img { width: 100%; height: 100%; object-fit: contain; }
 .file .nm { flex: 1; min-width: 0; }
 .file .nm .n { font-weight: 500; color: var(--n900); }
@@ -295,3 +295,31 @@ table.t td.acts > div { display: flex; justify-content: flex-end; gap: 0; }
 .cprev { display: flex; align-items: center; gap: var(--s3); margin-top: var(--s2); }
 .cprev .btn { height: 28px; padding: 0 var(--s3); border-radius: var(--r-md); display: inline-flex; align-items: center; font-size: 12px; line-height: 16px; font-weight: 500; border: 1px solid transparent; }
 .cprev .txt { font-weight: 500; }
+
+/* ── v2 추가 (DS v2.4) ── */
+.seg.sm { padding: 2px; }
+.seg.sm button { height: 20px; padding: 0 var(--s2); font-size: 12px; line-height: 16px; }
+.cswatch.sm { width: 28px; height: 28px; }
+.cprev .meta { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--n500); }
+/* 12-F-11 이미지 편집기 */
+.modal.lg { width: 720px; }
+.modal .mh .d { font-size: 13px; line-height: 18px; color: var(--n500); margin-top: var(--s1); }
+.ie-work { position: relative; width: 672px; height: 400px; background: var(--n100); border-radius: var(--r-lg); overflow: hidden; cursor: grab; touch-action: none;
+  -webkit-user-select: none; user-select: none; flex: none; }
+.ie-work.drag { cursor: grabbing; }
+.ie-work.busy { cursor: default; pointer-events: none; }
+.ie-work:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ie-fbg, .ie-line, .ie-mask, .ie-pic { position: absolute; pointer-events: none; }
+/* 투명 표시 체크무늬: 8px 칸 n0/n100 두 색(DS 12-F-9 예외), 틀 안에서만 */
+.ie-fbg.chk { background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16'%3E%3Crect width='16' height='16' fill='%23FFFFFF'/%3E%3Crect width='8' height='8' fill='%23F2F4F6'/%3E%3Crect x='8' y='8' width='8' height='8' fill='%23F2F4F6'/%3E%3C/svg%3E"); }
+.ie-pic { left: 0; top: 0; transform-origin: 0 0; max-width: none; max-height: none; }
+.ie-mask { background: var(--scrim); }
+.ie-line { border: 1px solid var(--n0); }
+.ie-row { display: flex; align-items: center; gap: var(--s2); height: 32px; margin-top: var(--s2); }
+.ie-work + .ie-row { margin-top: var(--s4); }
+.ie-k { width: 40px; flex: none; font-weight: 500; color: var(--n700); }
+.ie-slider { flex: 1; min-width: 0; }
+.ie-pct { width: 48px; flex: none; text-align: right; font-size: 13px; line-height: 18px; color: var(--n700); }
+.ie-color { display: inline-flex; align-items: center; margin-left: var(--s1); }
+.ie-note { font-size: 13px; line-height: 18px; color: var(--n500); margin-left: var(--s1); white-space: nowrap; }
+.ie-msg .help { margin-top: var(--s2); }

@@ -1,6 +1,7 @@
-/* 메인 색 파생값 (관람객 웹앱 디자인 규칙 AR1.0 3-3 함수 (A)~(D) + 경계선 규칙)
+/* 메인 색 파생값 (관람객 웹앱 디자인 규칙 AR1.3 3-3 함수 (A)~(E) + 경계선 규칙)
    index.html 과 admin.html 이 함께 쓴다. */
 export const DEFAULT_MAIN = '#DE4A28';
+export const DEFAULT_HOME_BG = '#FFFFFF';
 
 const H = (s) => [1, 3, 5].map((i) => parseInt(s.slice(i, i + 2), 16));
 const X = (a) => '#' + a.map((v) => v.toString(16).padStart(2, '0')).join('').toUpperCase();
@@ -46,5 +47,27 @@ export function applyTheme(hex, el = document.documentElement) {
   r.setProperty('--a-main-subtle', t.subtle);
   r.setProperty('--a-solid-bd-light', t.bdLight);
   r.setProperty('--a-solid-bd-dark', t.bdDark);
+  return t;
+}
+
+/* (E) 홈 바탕 파생값: 배경색 + 메인 색 → 홈 글자색, 홈 시작 버튼 바탕·글자(배경에 묻히면 흑/백 대체) */
+export function deriveHome(bgInput, mainInput) {
+  const bg = validHex(bgInput) ? bgInput.trim().toUpperCase() : DEFAULT_HOME_BG;
+  const t = derive(mainInput), b = H(bg);
+  const text = CR(b, K) >= CR(b, W) ? '#000000' : '#FFFFFF';
+  const swap = CR(H(t.solid), b) < 1.5;
+  const solid = swap ? text : t.solid;
+  const on = swap ? (text === '#000000' ? '#FFFFFF' : '#000000') : t.on;
+  const press = X(solid === '#000000' ? MIX(K, W, 0.2) : MIX(H(solid), K, 0.12));
+  return { bg, text, solid, on, press, swap };
+}
+
+export function applyHomeTheme(bgHex, mainHex, el = document.documentElement) {
+  const t = deriveHome(bgHex, mainHex), r = el.style;
+  r.setProperty('--a-home-bg', t.bg);
+  r.setProperty('--a-home-text', t.text);
+  r.setProperty('--a-home-solid', t.solid);
+  r.setProperty('--a-home-on', t.on);
+  r.setProperty('--a-home-press', t.press);
   return t;
 }

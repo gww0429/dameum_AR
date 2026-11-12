@@ -1,11 +1,11 @@
-/* dameum_AR 관람객 웹앱: 화면 전환, 홈, AR 흐름, 사은품 모달, 선물 상자, 직원 수령
+/* dameum_AR 관람객 웹앱 v2: 화면 전환, 홈, AR 흐름, 사은품 시트, 선물 상자, 직원 수령
    미리보기: ?preview=<포스터번호|home|box>  &reset=1 (미리보기 저장소 비움)  &embed=1 (설정 페이지 iframe, postMessage 로 설정 받음) */
-import { applyTheme } from './theme.js';
-import { openBox, sha256Hex } from './storage.js';
-import * as haptics from './haptics.js';
-import { Stage } from './ar.js';
-import { createMission, missionGuide } from './missions.js';
-import { openPlacer, closePlacer } from './placer.js';
+import { applyTheme, applyHomeTheme } from './theme.js?v=2';
+import { openBox, sha256Hex } from './storage.js?v=2';
+import * as haptics from './haptics.js?v=2';
+import { Stage } from './ar.js?v=2';
+import { createMission, missionGuide } from './missions.js?v=2';
+import { normalizeConfig } from './config.js?v=2';
 
 const $ = (id) => document.getElementById(id);
 const Q = new URLSearchParams(location.search);
@@ -13,10 +13,14 @@ const PV = Q.get('preview');
 const EMBED = Q.get('embed') === '1';
 const S = {
   cfg: null, box: null, preview: PV !== null || EMBED, screen: null, stage: null, stageBoot: false,
-  cur: null, mission: null, cardOpen: true, descMore: false, repeat: false, sensorDenied: false,
+  cur: null, mission: null, cardOpen: true, sensorDenied: false,
   staff: { step: 1, fails: 0, lockUntil: 0, show: false, sel: new Set(), err: false, timer: 0 },
-  giftOk: null, paused: false, embedScene: null
+  giftOk: null, paused: false, embedScene: null,
+  /* sheet: null | 'leaving'(카드 내려가는 중) | 'open'(사은품 시트) — 그동안 다른 포스터 인식·칩 변경 무시
+     boxFrom: 선물 상자에 들어온 길 'home' | 'ar' (직원 확인을 다녀와도 유지) */
+  sheet: null, boxFrom: 'home', lastIndex: 0
 };
+const REDUCED = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 window.__ar = { S, haptics: window.__haptics };
 
 const ICON = (n, cls = 'i') => `<svg class="${cls}"><use href="#i-${n}"/></svg>`;
@@ -31,12 +35,13 @@ const posters = () => (S.cfg && Array.isArray(S.cfg.posters) ? S.cfg.posters : [
 const missionPosters = () => posters().filter((p) => p.mission && p.mission.type && p.mission.type !== 'none');
 
 /* ── 화면 전환 ── */
-const SCREENS = ['v0', 'v1', 'v2', 'cam', 'v6', 'v7', 'v8'];
+const SCREENS = ['v0', 'v1', 'v2', 'cam', 'v7', 'v8'];
 function show(id) {
   SCREENS.forEach((s) => { $(s).hidden = s !== id; });
   S.screen = id;
   $('stage').hidden = !(id === 'cam' || (id === 'v2' && S.stageBoot));
-  document.body.classList.toggle('cam-on', id === 'cam' || id === 'v2' || id === 'v6');
+  document.body.classList.toggle('cam-on', id === 'cam' || id === 'v2');
+  document.body.classList.toggle('home-on', id === 'v1');
 }
 function status(title, msg, actions = [], loading = false) {
   $('v2Spin').hidden = !loading;
@@ -105,7 +110,7 @@ async function loadConfig() {
   try {
     const r = await fetch('config.json', { cache: 'no-store' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
-    cfg = await r.json();
+    cfg = normalizeConfig(await r.json()); // v1(schema 1) config 도 메모리에서 v2로 바꿔 쓴다(파일은 그대로)
   } catch (err) {
     if (location.protocol === 'file:') {
       status('HTTPS 주소가 필요합니다', '파일로 열면 설정을 읽을 수 없습니다. 배포된 https:// 주소나 로컬 서버(serve.ps1)로 열어 주세요.');
@@ -120,9 +125,9 @@ async function loadConfig() {
 
 function init(cfg) {
   S.cfg = cfg;
-  cfg.home = cfg.home || {};
   applyTheme(cfg.home.mainColor);
-  document.title = (cfg.home.title || '').trim() || 'AR 전시';
+  applyHomeTheme(cfg.home.background, cfg.home.mainColor);
+  document.title = (cfg.projectName || '').trim() || 'AR 전시';
   const pid = cfg.projectId || 'unknown';
   if (!S.box || S.box.pid !== pid) {
     S.box = openBox(pid, { preview: S.preview, reset: S.preview && Q.get('reset') === '1' && !S.didReset });
@@ -132,7 +137,7 @@ function init(cfg) {
 }
 
 function route(pv) {
-  if (pv === 'box') { openBoxScreen(); return; }
+  if (pv === 'box') { openBoxScreen('home'); return; }
   const n = parseInt(pv, 10);
   if (Number.isFinite(n) && n >= 1 && n <= posters().length) { enterPreview(n - 1); return; }
   renderHome(); show('v1');
@@ -143,21 +148,21 @@ function onEmbedMessage(e) {
   const d = e.data;
   if (!d || d.type !== 'dameum:config' || !d.config) return;
   const prevScene = S.embedScene;
-  init(d.config);
+  init(normalizeConfig(d.config));
   const sc = d.scene || { kind: 'home' };
   S.embedScene = sc;
   if (sc.kind === 'found' || sc.kind === 'gift') {
     const i = Math.max(0, Math.min(posters().length - 1, (sc.poster || 1) - 1));
-    if (!posters().length) { renderHome(); show('v1'); return; }
-    if (S.stage && S.stage.mode === 'preview' && S.screen !== 'v1') refreshPreviewPoster(i, prevScene);
-    else enterPreview(i);
+    if (!posters().length) { closeGift(); if (S.stage) exitStage(); renderHome(); show('v1'); return; }
     closeGift();
+    if (S.stage && S.stage.mode === 'preview' && S.screen === 'cam') refreshPreviewPoster(i, prevScene);
+    else enterPreview(i);
     if (sc.kind === 'gift') previewGiftSheet();
     return;
   }
   closeGift();
   if (S.stage) exitStage();
-  if (sc.kind === 'box') openBoxScreen(); else { renderHome(); show('v1'); }
+  if (sc.kind === 'box') openBoxScreen('home'); else { renderHome(); show('v1'); }
 }
 function refreshPreviewPoster(i, prevScene) {
   const p = posters()[i];
@@ -176,47 +181,33 @@ function refreshPreviewPoster(i, prevScene) {
   renderCard();
   S.stage.renderNow();
 }
+/* 설정 페이지 「사은품」 탭 미리보기: 카드·미션 그래픽 없이 시트만 (확인 → 미리보기 선물 상자) */
 function previewGiftSheet() {
   const p = S.cur && S.cur.poster;
   if (!p) return;
-  showGift({ head: '미션 완료', gift: p.gift || {}, onOk: closeGift });
+  showGift({ head: '미션 완료', gift: p.gift || {}, onOk: () => { closeGift(); goBoxFromAR(); } });
 }
 
-/* ── V1 홈 ── */
+/* ── V1 홈 (배경색 + 홈 이미지 + 버튼 두 개) ── */
 function setImg(img, src) {
   if (!src) { img.hidden = true; img.removeAttribute('src'); return; }
-  img.onerror = () => { img.hidden = true; };
+  img.onerror = () => { img.hidden = true; }; // 로드 실패 = 이미지 자리 비움(깨진 이미지 금지)
   img.onload = () => { img.hidden = false; };
-  if (img.getAttribute('src') !== src) img.src = src; else img.hidden = !img.complete || !img.naturalWidth;
+  if (img.getAttribute('src') !== src) { img.hidden = true; img.src = src; } else img.hidden = !img.complete || !img.naturalWidth;
 }
 function giftCount() { return Object.keys(S.box.data.gifts).filter((k) => k === '_stampTour' || posters().some((p) => p.id === k)).length; }
 function renderHome() {
   const h = S.cfg.home;
-  setImg($('homeLogo'), (h.logo || '').trim());
-  setImg($('homeHero'), (h.heroImage || '').trim());
-  $('homeTitle').textContent = (h.title || '').trim() || 'AR 전시';
-  const intro = (h.intro || '').trim();
-  $('homeIntro').textContent = intro; $('homeIntro').hidden = !intro;
-  const list = posters();
-  const showList = h.showPosterList !== false && list.length > 0;
-  $('homeList').hidden = !showList;
-  if (showList) {
-    const mp = missionPosters();
-    $('homeListCount').textContent = mp.length ? `${mp.filter((p) => S.box.has(p.id)).length} / ${mp.length} 완료` : '';
-    $('homeRows').innerHTML = list.map((p) =>
-      `<div class="prow">${p.image ? `<img class="thumb" alt="" src="${esc(p.image)}" onerror="this.style.visibility='hidden'">` : '<span class="thumb"></span>'}` +
-      `<span class="nm md w5 ell" title="${esc(p.name)}">${esc(p.name)}</span>` +
-      `${S.box.has(p.id) && p.mission && p.mission.type !== 'none' ? '<span class="sm w5 ok">완료</span>' : ''}</div>`).join('');
-  }
+  setImg($('homeImg'), (h.image || '').trim());
   const n = giftCount();
   $('homeBoxN').textContent = n; $('homeBoxN').hidden = n < 1;
-  const ready = list.length > 0;
+  const ready = posters().length > 0;
   $('homeStart').disabled = !ready;
   $('homeStartTxt').textContent = (h.startLabel || '').trim() || 'AR 시작하기';
-  $('homeNote').textContent = ready ? '카메라를 사용합니다. 영상은 저장되지 않습니다.' : '준비 중인 행사입니다';
+  $('homeNote').hidden = ready;
 }
 $('homeStart').onclick = () => startAR();
-$('homeBox').onclick = () => openBoxScreen();
+$('homeBox').onclick = () => openBoxScreen('home');
 
 /* ── AR 시작 ── */
 async function startAR() {
@@ -311,12 +302,14 @@ function enterPreview(i) {
   }
   $('camPv').hidden = false;
   show('cam');
+  S.lastIndex = i;
   S.stage.setPreviewPoster(posters()[i].image);
   S.stage.resizePreview();
   onFound(i);
 }
 
 function onFound(i) {
+  if (S.sheet) return; // 카드 퇴장·사은품 시트 중에는 다른 포스터 인식을 무시한다
   haptics.short();
   if (S.cur && S.cur.index === i) { S.stage.refound(); updateTop(); return; }
   switchPoster(i);
@@ -325,8 +318,10 @@ function switchPoster(i, silent) {
   if (S.mission) { S.mission.destroy(); S.mission = null; }
   const p = posters()[i];
   S.cur = { index: i, poster: p, ready: false };
-  S.cardOpen = true; S.descMore = false; S.repeat = false;
+  S.cardOpen = true;
   $('card').hidden = true;
+  $('card').classList.remove('leaving');
+  $('mlayer').hidden = false;
   $('mload').hidden = false;
   updateTop();
   S.stage.setPoster(i);
@@ -349,9 +344,9 @@ function onLost(i) { updateTop(); }
 
 let lastTop = '';
 function updateTop() {
+  if (S.sheet) return; // 시트 중에는 칩도 바꾸지 않는다
   const vis = !!(S.cur && S.stage && (S.stage.visible() || !S.cur.ready));
-  const name = S.cur ? (S.cur.poster.name || '') : '';
-  const key = (vis ? 1 : 0) + name;
+  const key = vis ? '1' : '0';
   const scanOn = !S.cur || !vis;
   $('scanUi').hidden = !scanOn;
   $('scanUi').querySelector('.guide').hidden = !!S.cur;
@@ -360,8 +355,8 @@ function updateTop() {
   const chip = $('camState');
   chip.classList.toggle('dim', !vis);
   chip.querySelector('.dot').hidden = !vis;
-  $('camStateTxt').textContent = vis ? name : '포스터를 찾는 중';
-  chip.title = vis ? name : '';
+  // 포스터 이름은 운영용 정보라 칩에 쓰지 않는다(명세 v2 R6)
+  $('camStateTxt').textContent = vis ? '인식됨' : '포스터를 찾는 중';
 }
 function onFrame() {
   if (S.screen !== 'cam') return;
@@ -385,131 +380,125 @@ touch.addEventListener('pointermove', (e) => { if (S.mission) S.mission.pointerM
 touch.addEventListener('pointerup', (e) => { if (S.mission) S.mission.pointerUp(e); });
 touch.addEventListener('pointercancel', (e) => { if (S.mission) S.mission.pointerCancel(e); });
 
-/* ── V4 설명·미션 카드 ── */
+/* ── V4 미션 카드: 안내 문구 + 진행 (제목·설명글·완료 줄 없음) ── */
 function renderCard() {
   const card = $('card');
-  if (!S.cur || !S.cur.ready) { card.hidden = true; return; }
-  const p = S.cur.poster, mi = S.mission;
+  const mi = S.mission;
   const type = mi ? mi.type : 'none';
-  const pr = mi && !mi.done ? mi.progress() : null;
+  // 미션 없음 = 카드 없이 3D만. 퇴장·시트 중에는 다시 그리지 않는다.
+  if (!S.cur || !S.cur.ready || type === 'none' || S.sheet) { if (!S.sheet || S.sheet === 'open') card.hidden = true; return; }
+  const pr = mi.progress();
+  const guide = esc(mi.guide());
   card.hidden = false;
+  card.classList.remove('leaving');
   card.classList.toggle('collapsed', !S.cardOpen);
+  const prog = (id) => (pr ? `<span class="md w6 num cprog" id="${id}" aria-live="polite">${esc(pr.text)}</span>` : '');
   if (!S.cardOpen) {
-    card.innerHTML = `<div class="handle"></div><div class="sh-top"><span class="md w6 ell" title="${esc(p.name)}">${esc(p.name)}</span>` +
-      `<span class="r">${pr ? `<span class="md w6 num" id="cardProgC" aria-live="polite">${esc(pr.text)}</span>` : ''}` +
-      `<button class="ib44" id="cardToggle" aria-label="펴기">${ICON('chevU')}</button></span></div>`;
+    card.innerHTML = `<div class="crow1"><span class="cguide one md w5">${guide}</span>${prog('cardProg')}` +
+      `<button class="ib44" id="cardToggle" aria-label="카드 펴기">${ICON('chevU')}</button></div>`;
     card.onclick = () => { S.cardOpen = true; renderCard(); };
     return;
   }
   card.onclick = null;
-  const desc = (p.description || '').trim();
-  let html = `<div class="handle"></div><div class="sh-top"><span class="md w6 ell" title="${esc(p.name)}">${esc(p.name)}</span>` +
-    `<button class="ib44" id="cardToggle" aria-label="접기">${ICON('chevD')}</button></div><div class="body">`;
-  if (desc) html += `<p class="desc${S.descMore ? '' : ' clamp'}" id="cardDesc">${esc(desc)}</p><button class="abtn text" id="cardMore" hidden style="margin-left:-8px">더 보기</button>`;
-  if (type !== 'none') {
-    html += desc ? '<div class="sep"></div>' : '<div style="height:4px"></div>';
-    if (mi.done) {
-      html += `<div class="mrow" style="align-items:center"><span class="md w5 ok">미션 완료</span><button class="abtn text" id="cardRetry" style="margin-right:-8px">다시 하기</button></div>`;
-      if (S.repeat) html += '<p class="xs t3">선물은 이미 받았어요</p>';
-    } else {
-      html += `<div class="mrow"><div class="l"><div class="xs t3">미션</div><div class="md w5">${esc(mi.guide())}</div></div>` +
-        (pr ? `<div class="md w6 num" id="cardProg" aria-live="polite" style="flex:none">${esc(pr.text)}</div>` : '') + '</div>';
-      if (pr && pr.ratio != null) html += `<div class="prog" style="margin-top:8px"><i id="cardBar" style="width:${Math.round(pr.ratio * 100)}%"></i></div>`;
-      if (type === 'quiz') html += '<div id="cardQuiz"></div>';
-    }
-  }
-  html += `</div><button class="abtn secondary h40" id="cardPlace" style="margin-top:16px;flex:none">${ICON('cube')}내 공간에 놓기</button>`;
+  let html = `<div class="handle"></div><div class="crow1"><span class="cguide md w5${type === 'quiz' ? ' full' : ''}">${guide}</span>${type === 'quiz' ? '' : prog('cardProg')}` +
+    `<button class="ib44" id="cardToggle" aria-label="카드 접기">${ICON('chevD')}</button></div>`;
+  if (pr && pr.ratio != null) html += `<div class="prog cbar"><i id="cardBar" style="width:${Math.round(pr.ratio * 100)}%"></i></div>`;
+  if (type === 'quiz') html += '<div id="cardQuiz" class="cquiz"></div>';
   card.innerHTML = html;
   $('cardToggle').onclick = (e) => { e.stopPropagation(); S.cardOpen = false; renderCard(); };
   if ($('cardQuiz')) mi.renderQuiz($('cardQuiz'));
-  if ($('cardRetry')) $('cardRetry').onclick = () => { S.repeat = false; mi.reset(); renderCard(); };
-  if ($('cardDesc') && !S.descMore) {
-    const d = $('cardDesc');
-    $('cardMore').hidden = !(d.scrollHeight > d.clientHeight + 1);
-    $('cardMore').onclick = () => { S.descMore = true; renderCard(); };
-  }
-  $('cardPlace').onclick = () => openPlace();
 }
 function updateProgress() {
-  if (!S.mission || !S.cur) return;
-  const pr = S.mission.done ? null : S.mission.progress();
+  if (!S.mission || !S.cur || S.sheet) return;
+  const pr = S.mission.progress();
   if (!pr) return;
   if ($('cardProg')) $('cardProg').textContent = pr.text;
-  if ($('cardProgC')) $('cardProgC').textContent = pr.text;
   if ($('cardBar') && pr.ratio != null) $('cardBar').style.width = Math.round(pr.ratio * 100) + '%';
 }
 
-/* ── 미션 성공 → V5 사은품 모달 ── */
+/* ── 미션 성공 → 카드 퇴장 → V5 사은품 시트 → (완주 시트) → V7 선물 상자 ── */
 function onMissionSuccess() {
   haptics.success();
   const p = S.cur.poster;
   const already = S.box.has(p.id);
-  S.repeat = already;
-  showGift({
+  S.sheet = 'leaving';
+  $('mlayer').hidden = true; // 카메라 위 미션 그래픽은 즉시 숨김
+  cardLeave(() => showGift({
     head: already ? '이미 받은 선물' : '미션 완료', gift: p.gift || {},
     onOk: () => {
-      if (!already) S.box.earn(p.id);
-      closeGift();
-      renderCard();
-      checkStampTour();
+      if (!already) S.box.earn(p.id); // 이미 받은 포스터는 담지 않는다(중복 지급 없음)
+      const st = stampTourJustDone();
+      if (st) swapGift({ head: '스탬프 투어 완주', gift: st.gift || {}, onOk: finishToBox });
+      else finishToBox();
     }
-  });
+  }));
 }
-function checkStampTour() {
+/* 카드가 아래로 내려가 화면 밖으로 나간 뒤(transitionend)에만 다음 단계. 두 시트가 같은 프레임에 보이지 않는다. */
+function cardLeave(next) {
+  const card = $('card');
+  let done = false;
+  const go = () => {
+    if (done) return; done = true;
+    card.hidden = true;
+    card.classList.remove('leaving');
+    const once = () => { if (S.sheet === 'leaving') next(); };
+    if (REDUCED()) { requestAnimationFrame(once); setTimeout(once, 50); } // 숨긴 다음 프레임(rAF 가 멈춘 창 대비 타이머)
+    else once();
+  };
+  if (card.hidden || REDUCED()) { go(); return; }
+  card.onclick = null;
+  card.addEventListener('transitionend', function te(e) { if (e.target === card) { card.removeEventListener('transitionend', te); go(); } });
+  card.classList.add('leaving');
+  setTimeout(go, 400); // transitionend 가 오지 않는 환경(숨은 탭 등) 대비
+}
+function stampTourJustDone() {
   const st = S.cfg.stampTour;
-  if (!st || !st.enabled) return;
+  if (!st || !st.enabled) return null;
   const mp = missionPosters();
-  if (!mp.length || S.box.has('_stampTour')) return;
-  if (mp.every((p) => S.box.has(p.id))) {
-    S.box.earn('_stampTour');
-    showGift({ head: '스탬프 투어 완주', gift: st.gift || {}, onOk: closeGift });
-  }
+  if (!mp.length || S.box.has('_stampTour')) return null;
+  if (!mp.every((p) => S.box.has(p.id))) return null;
+  S.box.earn('_stampTour');
+  return st;
 }
-function showGift({ head, gift, onOk }) {
+function fillGift({ head, gift }) {
   const h = $('giftHead');
   h.textContent = head;
   h.style.color = head === '이미 받은 선물' ? 'var(--a-t3)' : 'var(--a-main-text)';
   $('giftTitle').textContent = (gift.title || '').trim() || '선물';
   const img = (gift.image || '').trim();
   $('giftImgBox').hidden = !img;
-  if (img) { $('giftImg').src = img; $('giftImg').onerror = () => { $('giftImgBox').hidden = true; }; }
+  if (img) { $('giftImg').onerror = () => { $('giftImgBox').hidden = true; }; $('giftImg').src = img; }
+  else $('giftImg').removeAttribute('src');
   const desc = (gift.description || '').trim();
   $('giftDesc').textContent = desc; $('giftDesc').hidden = !desc;
   const cn = (gift.claimNote || '').trim();
   $('giftClaimTxt').textContent = cn; $('giftClaim').hidden = !cn;
   $('giftNoSave').hidden = S.box.persistent;
+}
+function showGift({ head, gift, onOk }) {
+  if (S.screen !== 'cam') return; // 그사이 AR 을 떠났으면 띄우지 않는다
+  S.sheet = 'open';
+  $('card').hidden = true;
+  $('mlayer').hidden = true;
+  fillGift({ head, gift });
   S.giftOk = onOk;
   $('giftScrim').hidden = false;
   $('gift').hidden = false;
   $('giftOk').focus({ preventScroll: true });
 }
-function closeGift() { $('giftScrim').hidden = true; $('gift').hidden = true; S.giftOk = null; }
-$('giftOk').onclick = () => { const f = S.giftOk; if (f) f(); else closeGift(); };
-
-/* ── V6 내 공간에 놓기 ── */
-async function openPlace() {
-  if (S.preview) { notice('미리보기에서는 실행되지 않아요'); return; }
-  const p = S.cur && S.cur.poster;
-  if (!p) return;
-  const failed = S.cur.model && S.cur.model.failed;
-  const src = p.model && !failed ? p.model : 'assets/placeholder.glb';
-  if (S.mission && !S.mission.done && S.mission.pointerCancel) { /* 진행 상태는 유지 */ }
-  await S.stage.pauseAR();
-  $('v6Notice').hidden = true;
-  show('v6');
-  try {
-    await openPlacer($('v6Host'), src, { onUnsupported: () => { $('v6Notice').hidden = false; } });
-  } catch (err) {
-    console.warn(err);
-    $('v6Notice').hidden = false;
-  }
+/* 완주가 이어질 때: 시트는 그대로, 내용만 바꾼다(150ms 페이드) */
+function swapGift({ head, gift, onOk }) {
+  fillGift({ head, gift });
+  S.giftOk = onOk;
+  const b = $('giftBody');
+  b.classList.remove('swap'); void b.offsetWidth; b.classList.add('swap');
+  $('giftOk').focus({ preventScroll: true });
 }
-$('v6Back').onclick = async () => {
-  closePlacer($('v6Host'));
-  show('cam');
-  updateTop();
-  try { await S.stage.resumeAR(); } catch (err) { console.warn(err); cameraError(err || {}); }
-};
+function closeGift() { $('giftScrim').hidden = true; $('gift').hidden = true; S.giftOk = null; S.sheet = null; }
+$('giftOk').onclick = () => { const f = S.giftOk; if (f) f(); else closeGift(); };
+/* 마지막 「확인」: 카메라·AR 종료 → 선물 상자(V7). 「뒤로」는 AR 로 돌아온다. */
+function finishToBox() { closeGift(); goBoxFromAR(); }
+function goBoxFromAR() { S.lastIndex = S.cur ? S.cur.index : S.lastIndex; openBoxScreen('ar'); }
 
 /* ── 종료 ── */
 function exitStage() {
@@ -517,7 +506,7 @@ function exitStage() {
   if (S.stage) { S.stage.destroy(); S.stage = null; }
   S.cur = null;
   $('card').hidden = true; $('mload').hidden = true; $('camNotice').hidden = true;
-  $('mlayer').innerHTML = '';
+  $('mlayer').innerHTML = ''; $('mlayer').hidden = false;
   lastTop = '';
 }
 function goHome() { exitStage(); closeGift(); renderHome(); show('v1'); }
@@ -549,12 +538,43 @@ function receivedList() {
   return Object.entries(S.box.data.gifts).map(([id, v]) => ({ ...giftInfo(id), ...v, id }))
     .filter((x) => x.title).sort((a, b) => String(b.earnedAt).localeCompare(String(a.earnedAt)));
 }
-function openBoxScreen() {
+function openBoxScreen(from = 'home') {
   if (S.stage) exitStage();
+  S.boxFrom = from === 'ar' ? 'ar' : 'home';
   renderBox();
   $('boxPv').hidden = !S.preview;
   show('v7');
+  layoutBoxBar();
+  // 휴대폰 뒤로 가기도 앱바 「뒤로」와 같은 목적지(설정 페이지 미리보기 안에서는 쓰지 않음)
+  if (!EMBED && !(history.state && history.state.dv7)) { try { history.pushState({ dv7: 1 }, ''); } catch (_) {} }
 }
+/* 앱바 뒤로 버튼이 목적지를 보인다: 홈 = chevron 만 / AR = chevron + 「AR」. 제목이 가운데 남도록 오른쪽 칸을 같은 폭으로. */
+function layoutBoxBar() {
+  const ar = S.boxFrom === 'ar';
+  const b = $('boxBack');
+  $('boxBackTxt').hidden = !ar;
+  b.classList.toggle('wide', ar);
+  b.setAttribute('aria-label', ar ? 'AR 화면으로 돌아가기' : '홈으로');
+  const slot = $('boxSlot');
+  slot.style.minWidth = '';
+  const w = Math.max(b.offsetWidth, slot.scrollWidth, 44);
+  slot.style.minWidth = w + 'px';
+  $('boxTtl').style.left = $('boxTtl').style.right = (w + 8) + 'px';
+}
+function doBoxBack() {
+  if (S.boxFrom === 'ar') {
+    if (S.preview) { enterPreview(Math.min(S.lastIndex || 0, Math.max(0, posters().length - 1))); return; } // 미리보기: 「인식 후」 처음부터
+    if (!posters().length) { renderHome(); show('v1'); return; }
+    startAR(); // V2 준비(스피너) → V3 스캔
+    return;
+  }
+  renderHome(); show('v1');
+}
+window.addEventListener('popstate', () => {
+  if (S.skipPop) { S.skipPop = false; return; } // 「뒤로」 버튼이 이미 처리함
+  if (S.screen === 'v8') { clearInterval(S.staff.timer); S.staff.draft = ''; renderBox(); show('v7'); layoutBoxBar(); try { history.pushState({ dv7: 1 }, ''); } catch (_) {} return; }
+  if (S.screen === 'v7') doBoxBack();
+});
 function renderBox() {
   const st = S.cfg.stampTour;
   let html = '';
@@ -583,7 +603,7 @@ function renderBox() {
     html += '<div class="empty"><p class="md w5">아직 받은 선물이 없습니다</p><p class="sm t2" style="margin-top:4px">포스터 미션을 완료하면 여기에 담깁니다.</p></div>';
   } else {
     html += list.map((g) => `<div class="grow">${g.image ? `<img class="gthumb" alt="" src="${esc(g.image)}" onerror="this.removeAttribute('src')">` : '<span class="gthumb"></span>'}` +
-      `<div class="mid"><div class="md w5 ell${g.claimedAt ? ' t2' : ''}" title="${esc(g.title)}">${esc(g.title)}</div><div class="xs t3 num ell">${esc(g.from)} · ${stamp(g.earnedAt)}</div></div>` +
+      `<div class="mid"><div class="md w5 ell${g.claimedAt ? ' t2' : ''}" title="${esc(g.title)}">${esc(g.title)}</div><div class="xs t3 num gfrom"><span class="gname" title="${esc(g.from)}">${esc(g.from)}</span><span class="gdate">&nbsp;· ${stamp(g.earnedAt)}</span></div></div>` +
       `<div class="st">${g.claimedAt ? `<div class="sm w5 ok">수령 완료</div><div class="xs t3 num">${stamp(g.claimedAt)}</div>` : '<div class="sm w5">수령 전</div>'}</div></div>`).join('');
   }
   $('boxBody').innerHTML = html;
@@ -591,7 +611,8 @@ function renderBox() {
   $('boxStaff').disabled = !pending;
   $('boxNote').hidden = !!pending;
 }
-$('boxBack').onclick = () => { renderHome(); show('v1'); };
+// 탭 처리 안에서 바로 이동한다(아이폰 방향 센서 권한 요청은 사용자 탭 안에서만 허용됨). 쌓아 둔 기록만 조용히 되돌린다.
+$('boxBack').onclick = () => { if (!EMBED && history.state && history.state.dv7) { S.skipPop = true; history.back(); } doBoxBack(); };
 $('boxStaff').onclick = () => openStaff();
 
 /* ── V8 직원 확인 ── */

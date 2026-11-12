@@ -1,7 +1,7 @@
 /* 미션 6종: tap · drag · hold · rotate · find · quiz (+ none)
    판정은 입력 이벤트와 performance.now() 경과 시간으로만 한다. 화면 위치 맞추기만 그리기 주기에 맡긴다. */
 import * as THREE from 'three';
-import * as haptics from './haptics.js';
+import * as haptics from './haptics.js?v=2';
 
 export const MISSION_TYPES = ['tap', 'drag', 'hold', 'rotate', 'find', 'quiz', 'none'];
 /* 드래그 목표 안전 영역(화면 높이 %): 설명·미션 카드는 최대 높이 45%라 위쪽 55%만 늘 보인다.
@@ -15,7 +15,12 @@ const MOVE_TAP = 12;
 const num = (v, d) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : d; };
 const fmt1 = (v) => (Math.floor(v * 10) / 10).toFixed(1);
 
+/* 안내 문구: 운영자가 쓴 mission.guide(퀴즈·없음 제외), 비면 종류·조건값에 맞는 기본 문구 */
 export function missionGuide(m) {
+  const own = m && m.type !== 'quiz' && m.type !== 'none' && typeof m.guide === 'string' ? m.guide.trim() : '';
+  return own || defaultGuide(m);
+}
+export function defaultGuide(m) {
   switch (m && m.type) {
     case 'tap': return `3D를 ${num(m.count, 5)}번 터치하세요`;
     case 'drag': return '3D를 표시된 곳으로 끌어다 놓으세요';
