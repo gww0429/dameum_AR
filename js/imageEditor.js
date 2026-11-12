@@ -2,16 +2,18 @@
    규격 비율 틀에 맞춰 끌기·확대(슬라이더·휠)·방향키로 배치하고, 배경(투명/색)을 골라 규격 픽셀로 출력한다.
    DOM 도우미(h, btn, iconBtn, icon, help, seg, colorField)는 admin.js 에서 넘겨받아 같은 컴포넌트를 쓴다. */
 const KB = 1024, MB = 1024 * 1024;
-export const SRC_MAX = 20 * MB; // 편집기에 넣을 수 있는 원본: JPG·PNG 20MB 이하
+export const SRC_MAX = 30 * MB; // 편집기에 넣을 수 있는 원본: JPG·PNG·WebP 30MB 이하 (v3.3)
 
-/* 규격 (명세 v2 7-2) */
+/* 규격 (명세 v2 7-2, v3.3 용량 기준 완화)
+   max  = 권장 용량: 저장 시 화질을 단계적으로 낮춰 여기에 맞춘다. 그래도 넘으면 경고만 하고 저장한다.
+   hard = 상한: 이것을 넘으면 관람객 로딩이 너무 느려 저장하지 않는다. */
 export const IMG_SPECS = {
-  home: { key: 'home', title: '홈 이미지 편집', rw: 3, rh: 4, w: 1080, h: 1440, pngOnly: false, max: 1.5 * MB, maxTxt: '1.5MB',
-    desc: '3:4 · 출력 1080×1440 · 투명 PNG / 색 JPG · 최대 1.5MB', line: '3:4 · 1080×1440 · PNG·JPG' },
-  gift: { key: 'gift', title: '사은품 이미지 편집', rw: 1, rh: 1, w: 800, h: 800, pngOnly: false, max: 500 * KB, maxTxt: '500KB',
-    desc: '1:1 · 출력 800×800 · 투명 PNG / 색 JPG · 최대 500KB', line: '1:1 · 800×800 · PNG·JPG' },
-  icon: { key: 'icon', title: '아이콘 편집', rw: 1, rh: 1, w: 256, h: 256, pngOnly: true, max: 200 * KB, maxTxt: '200KB',
-    desc: '1:1 · 출력 256×256 · PNG · 최대 200KB', line: '1:1 · 256×256 · PNG · 투명 배경 권장' }
+  home: { key: 'home', title: '홈 이미지 편집', rw: 3, rh: 4, w: 1080, h: 1440, pngOnly: false, max: 1.5 * MB, maxTxt: '1.5MB', hard: 6 * MB, hardTxt: '6MB',
+    desc: '3:4 · 출력 1080×1440 · WebP·JPG·PNG 자동 · 권장 1.5MB', line: '3:4 · 1080×1440 · JPG·PNG·WebP' },
+  gift: { key: 'gift', title: '사은품 이미지 편집', rw: 1, rh: 1, w: 800, h: 800, pngOnly: false, max: 500 * KB, maxTxt: '500KB', hard: 3 * MB, hardTxt: '3MB',
+    desc: '1:1 · 출력 800×800 · WebP·JPG·PNG 자동 · 권장 500KB', line: '1:1 · 800×800 · JPG·PNG·WebP' },
+  icon: { key: 'icon', title: '아이콘 편집', rw: 1, rh: 1, w: 256, h: 256, pngOnly: true, max: 200 * KB, maxTxt: '200KB', hard: 1 * MB, hardTxt: '1MB',
+    desc: '1:1 · 출력 256×256 · 투명 PNG·WebP · 권장 200KB', line: '1:1 · 256×256 · JPG·PNG·WebP · 투명 배경 권장' }
 };
 
 const WORK_W = 672, WORK_H = 400, WORK_PAD = 32;
@@ -47,17 +49,43 @@ async function render(spec, img, geo, bg) {
   g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
   const k = spec.w / geo.fw;
   g.drawImage(img, (geo.x - geo.fx) * k, (geo.y - geo.fy) * k, geo.w * k, geo.h * k);
-  // 아이콘(③)은 언제나 PNG, 사은품·홈(①②)은 투명 = PNG / 색 = JPG(품질 0.9 → 최저 0.6)
-  if (spec.pngOnly || !color) {
-    const b = await canvasBlob(cv, 'image/png');
-    return { blob: b, fmt: 'png' };
+  // v3.3 저장 형식 자동 선택
+  //  · 투명 픽셀이 실제로 있으면: PNG → 넘치면 WebP(투명 유지, 품질 0.9→0.5)
+  //  · 투명 픽셀이 없으면(색 배경 포함): WebP(품질 0.9→0.5) → 브라우저가 WebP를 못 만들면 JPG(0.9→0.5)
+  //  · 아이콘은 투명이 기본이라 PNG 먼저
+  const alpha = !color && hasAlpha(cv);
+  const lossy = async (type, fmt) => {
+    let best = null;
+    for (let q = 0.9; q >= 0.5 - 1e-9; q -= 0.1) {
+      const b = await canvasBlob(cv, type, Math.round(q * 10) / 10);
+      if (!b || b.type !== type) return null; // 이 브라우저는 이 형식을 만들 수 없음
+      best = { blob: b, fmt };
+      if (b.size <= spec.max) break;
+    }
+    return best;
+  };
+  const cands = [];
+  if (alpha || spec.pngOnly) {
+    const png = await canvasBlob(cv, 'image/png');
+    if (png) cands.push({ blob: png, fmt: 'png' });
+    if (!png || png.size > spec.max) { const w = await lossy('image/webp', 'webp'); if (w) cands.push(w); }
+  } else {
+    const w = await lossy('image/webp', 'webp');
+    if (w) cands.push(w);
+    if (!w || w.blob.size > spec.max) { const j = await lossy('image/jpeg', 'jpg'); if (j) cands.push(j); }
   }
-  let b = null;
-  for (let q = 0.9; q >= 0.6 - 1e-9; q -= 0.1) {
-    b = await canvasBlob(cv, 'image/jpeg', Math.round(q * 10) / 10);
-    if (b && b.size <= spec.max) break;
-  }
-  return { blob: b, fmt: 'jpg' };
+  if (!cands.length) return null;
+  const fit = cands.find((c) => c.blob.size <= spec.max);
+  return fit || cands.reduce((a, b) => (b.blob.size < a.blob.size ? b : a)); // 다 넘치면 가장 작은 것
+}
+
+/* 캔버스에 실제 투명(알파 < 255) 픽셀이 있는지 */
+function hasAlpha(cv) {
+  try {
+    const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+    for (let i = 3; i < d.length; i += 16) if (d[i] < 255) return true; // 4픽셀마다 표본
+    return false;
+  } catch (_) { return true; }
 }
 
 /* 편집기 열기. place = {z, ox, oy}(마지막 배치), bg = {mode:'t'|'c', color}.
@@ -106,7 +134,7 @@ export function openImageEditor({ spec, img, place, bg, ui, onApply, onCancel })
   const colorHost = h('span', { class: 'ie-color' });
   const cf = colorField(st.bgColor, (v) => { st.bgColor = v; st.err = ''; draw(); }, { plain: true, sm: true, fallback: '#FFFFFF', label: '배경' });
   colorHost.append(cf);
-  const jpgNote = h('span', { class: 'ie-note' }, 'JPG로 저장됩니다');
+  const jpgNote = h('span', { class: 'ie-note' }, '용량에 맞춰 자동으로 압축해 저장합니다');
   const bgRow = h('div', { class: 'ie-row' }, h('span', { class: 'ie-k' }, '배경'), segHost, colorHost, jpgNote);
   const msg = h('div', { class: 'ie-msg' });
 
@@ -134,7 +162,7 @@ export function openImageEditor({ spec, img, place, bg, ui, onApply, onCancel })
     segHost.replaceChildren(seg([['t', '투명'], ['c', '색']], st.bgMode, (v) => { st.bgMode = v; st.err = ''; draw(); }, { label: '배경' }));
     segHost.firstChild.classList.add('sm');
     colorHost.hidden = !color;
-    jpgNote.hidden = !(color && !spec.pngOnly);
+    jpgNote.hidden = false;
     // 틀 안 실제 원본 픽셀이 출력보다 작으면 경고(적용은 막지 않음). 오류가 있으면 오류 한 줄만.
     const inW = Math.round(F.w / g.s), inH = Math.round(F.h / g.s);
     if (st.err) msg.replaceChildren(help(st.err, 'error'));
@@ -200,12 +228,12 @@ export function openImageEditor({ spec, img, place, bg, ui, onApply, onCancel })
     try { out = await render(spec, img, geo(), { mode: st.bgMode, color: st.bgColor }); } catch (err) { console.warn(err); }
     const fail = (m) => { st.busy = false; st.err = m; applyBtn.disabled = false; cancelBtn.disabled = false; applyBtn.replaceChildren('적용'); draw(); };
     if (!out || !out.blob) { fail('이미지를 만들지 못했습니다'); return; }
-    if (out.blob.size > spec.max) {
-      fail(`${sizeTxt(out.blob.size)} — 최대 ${spec.maxTxt}를 넘습니다. ${spec.pngOnly ? '' : '배경을 색으로 바꾸거나 '}더 단순한 이미지를 써 주세요`);
+    if (out.blob.size > spec.hard) { // 권장 용량은 경고만, 상한만 막는다(v3.3)
+      fail(`${sizeTxt(out.blob.size)} — ${spec.hardTxt}를 넘으면 관람객 로딩이 너무 느려 저장할 수 없습니다. 확대하거나 더 단순한 이미지를 써 주세요`);
       return;
     }
     try {
-      await onApply(out.blob, { w: spec.w, h: spec.h, fmt: out.fmt, place: { z: st.z, ox: st.ox, oy: st.oy }, bg: { mode: st.bgMode, color: st.bgColor } });
+      await onApply(out.blob, { w: spec.w, h: spec.h, fmt: out.fmt, over: out.blob.size > spec.max, place: { z: st.z, ox: st.ox, oy: st.oy }, bg: { mode: st.bgMode, color: st.bgColor } });
     } catch (err) { console.warn(err); fail('저장하지 못했습니다'); return; }
     close(false);
   }

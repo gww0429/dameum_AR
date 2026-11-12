@@ -2,14 +2,14 @@
    편집 중 내용은 이 PC 브라우저 IndexedDB(dameum_ar_admin)에 자동 저장한다. */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { derive, deriveHome, validHex, DEFAULT_MAIN, DEFAULT_HOME_BG, PRESET_REP, avgBottom } from './theme.js?v=3.2';
-import { sha256Hex, isoNow } from './storage.js?v=3.2';
-import { loadModel, deg, PLACEMENT_DEFAULT } from './ar.js?v=3.2';
-import { DRAG_SAFE, clampDragY, defaultGuide } from './missions.js?v=3.2';
-import { toGlb, MODEL_ACCEPT, MODEL_FMT_LABEL } from './convert.js?v=3.2';
-import { GitHub, gitBlobSha, loadSettings, saveSettings, clearSettings, validRepo, siteUrl, errorInfo } from './github.js?v=3.2';
-import { normalizeConfig, normalizeMission, GUIDE_MAX, SCHEMA, BG_PRESETS, EFFECTS, BUILTIN_MODELS, builtinModelPath, isBuiltin, builtinUrl, SUCCESS_NOTE_MAX } from './config.js?v=3.2';
-import { IMG_SPECS, SRC_MAX, decodeImage, openImageEditor } from './imageEditor.js?v=3.2';
+import { derive, deriveHome, validHex, DEFAULT_MAIN, DEFAULT_HOME_BG, PRESET_REP, avgBottom } from './theme.js?v=3.3';
+import { sha256Hex, isoNow } from './storage.js?v=3.3';
+import { loadModel, deg, PLACEMENT_DEFAULT } from './ar.js?v=3.3';
+import { DRAG_SAFE, clampDragY, defaultGuide } from './missions.js?v=3.3';
+import { toGlb, MODEL_ACCEPT, MODEL_FMT_LABEL } from './convert.js?v=3.3';
+import { GitHub, gitBlobSha, loadSettings, saveSettings, clearSettings, validRepo, siteUrl, errorInfo } from './github.js?v=3.3';
+import { normalizeConfig, normalizeMission, GUIDE_MAX, SCHEMA, BG_PRESETS, EFFECTS, BUILTIN_MODELS, builtinModelPath, isBuiltin, builtinUrl, SUCCESS_NOTE_MAX } from './config.js?v=3.3';
+import { IMG_SPECS, SRC_MAX, decodeImage, openImageEditor } from './imageEditor.js?v=3.3';
 
 /* ───────── 기본값 ───────── */
 const MB = 1024 * 1024;
@@ -235,12 +235,16 @@ async function dropFile(path) {
   delete A.meta.files[path];
   await DB.del('files', path);
 }
-const extOf = (file) => (/\.png$/i.test(file.name) || file.type === 'image/png') ? 'png' : (/\.glb$/i.test(file.name) ? 'glb' : 'jpg');
-const isImg = (file) => /^image\/(png|jpeg)$/.test(file.type) || /\.(png|jpe?g)$/i.test(file.name);
+const extOf = (file) => (/\.png$/i.test(file.name) || file.type === 'image/png') ? 'png'
+  : (/\.webp$/i.test(file.name) || file.type === 'image/webp') ? 'webp' // v3.3
+  : (/\.glb$/i.test(file.name) ? 'glb' : 'jpg');
+const isImg = (file) => /^image\/(png|jpeg|webp)$/.test(file.type) || /\.(png|jpe?g|webp)$/i.test(file.name);
+const IMG_ACCEPT = 'image/png,image/jpeg,image/webp';
+const fmtOfPath = (p) => (/\.png$/i.test(p) ? 'PNG' : /\.webp$/i.test(p) ? 'WebP' : 'JPG');
 
 /* 파일 칸 (12-F-6) */
 function fileField({ path, kind = 'image', required, onFile, onClear, warn, error }) {
-  const accept = kind === 'glb' ? MODEL_ACCEPT : 'image/png,image/jpeg';
+  const accept = kind === 'glb' ? MODEL_ACCEPT : IMG_ACCEPT;
   const picker = h('input', { type: 'file', accept, hidden: true, multiple: kind === 'glb' ? '' : null });
   const wrap = h('div');
   let err = error || '', busy = false;
@@ -260,7 +264,7 @@ function fileField({ path, kind = 'image', required, onFile, onClear, warn, erro
       return;
     }
     const file = files[0];
-    if (!isImg(file)) { err = 'JPG·PNG 파일만 올릴 수 있습니다'; draw(); return; }
+    if (!isImg(file)) { err = 'JPG·PNG·WebP 파일만 올릴 수 있습니다'; draw(); return; }
     if (file.size > FILE_MAX) { err = `${sizeTxt(file.size)} — 50MB를 넘는 파일은 저장소에 올릴 수 없습니다`; draw(); return; }
     err = '';
     await onFile(file);
@@ -287,7 +291,7 @@ function fileField({ path, kind = 'image', required, onFile, onClear, warn, erro
     } else {
       const d = h('div', { class: 'drop' + (err ? ' err' : ''), role: 'button', tabindex: '0', onclick: () => picker.click(),
         onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); picker.click(); } } },
-        '파일을 끌어 놓거나 ', h('span', { class: 'link' }, '선택'), h('span', { class: 'fmt' }, kind === 'glb' ? MODEL_FMT_LABEL : 'JPG·PNG'));
+        '파일을 끌어 놓거나 ', h('span', { class: 'link' }, '선택'), h('span', { class: 'fmt' }, kind === 'glb' ? MODEL_FMT_LABEL : 'JPG·PNG·WebP'));
       d.addEventListener('dragover', (e) => { e.preventDefault(); d.classList.add('over'); });
       d.addEventListener('dragleave', () => d.classList.remove('over'));
       d.addEventListener('drop', (e) => { e.preventDefault(); d.classList.remove('over'); take(e.dataTransfer.files); });
@@ -306,7 +310,7 @@ const kbTxt = (b) => (b >= MB ? (b / MB).toFixed(1) + 'MB' : Math.max(1, Math.ro
 const editorUi = () => ({ h, btn, iconBtn, icon, help, seg, colorField });
 function specField({ specKey, path, base, onSaved, onClear }) {
   const spec = IMG_SPECS[specKey];
-  const picker = h('input', { type: 'file', accept: 'image/png,image/jpeg', hidden: true });
+  const picker = h('input', { type: 'file', accept: IMG_ACCEPT, hidden: true });
   const wrap = h('div');
   let err = '', busy = false;
   const fail = (m) => { busy = false; err = m; draw(); };
@@ -323,8 +327,8 @@ function specField({ specKey, path, base, onSaved, onClear }) {
   const take = async (list) => {
     const file = [...(list || [])][0];
     if (!file || busy) return;
-    if (!isImg(file)) { fail('JPG·PNG 파일만 올릴 수 있습니다'); return; }
-    if (file.size > SRC_MAX) { fail('20MB 이하 이미지를 올려 주세요'); return; }
+    if (!isImg(file)) { fail('JPG·PNG·WebP 파일만 올릴 수 있습니다'); return; }
+    if (file.size > SRC_MAX) { fail('30MB 이하 이미지를 올려 주세요'); return; }
     busy = true; err = ''; draw();
     let img;
     try { img = await decodeImage(file); } catch (_) { fail('이미지를 읽지 못했습니다'); return; } // 읽지 못하면 편집기를 열지 않는다
@@ -352,7 +356,7 @@ function specField({ specKey, path, base, onSaved, onClear }) {
     } else if (path && (meta || A.blobs.has(path))) {
       const name = (meta && meta.name) || path.split('/').pop();
       const size = meta ? meta.size : (A.blobs.get(path) || {}).size || 0;
-      const fmt = /\.png$/i.test(path) ? 'PNG' : 'JPG';
+      const fmt = fmtOfPath(path);
       const w = meta && meta.w, hh = meta && meta.h;
       if (meta && !w) { // v1 에서 올린 이미지: 픽셀 크기를 읽어 둔다(발행 내용은 바뀌지 않음)
         decodeImage(urlOf(path)).then((im) => { meta.w = im.naturalWidth; meta.h = im.naturalHeight; if (wrap.isConnected) draw(); }).catch(() => {});
@@ -363,8 +367,9 @@ function specField({ specKey, path, base, onSaved, onClear }) {
         btn('편집', () => edit(), { kind: 'ghost', size: 'sm' }),
         btn('바꾸기', () => picker.click(), { kind: 'ghost', size: 'sm' }),
         btn('지우기', () => onClear && onClear(), { kind: 'ghost', size: 'sm' })));
-      const off = w && (w !== spec.w || hh !== spec.h || (spec.pngOnly && fmt !== 'PNG'));
+      const off = w && (w !== spec.w || hh !== spec.h || (spec.pngOnly && fmt === 'JPG'));
       if (!err && off) wrap.append(help('규격과 다릅니다 · 편집으로 맞출 수 있습니다'));
+      else if (!err && size > spec.max) wrap.append(help(`권장 용량(${spec.maxTxt})보다 커서 관람객 화면에서 늦게 뜰 수 있습니다`, 'warn')); // v3.3
     } else {
       const d = h('div', { class: 'drop' + (err ? ' err' : ''), role: 'button', tabindex: '0', onclick: () => picker.click(),
         onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); picker.click(); } } },
@@ -734,7 +739,7 @@ function openAddPanel() {
         h('div', { class: 'nm' }, h('div', { class: 'n ell', title: st.file.name }, st.file.name), h('div', { class: 'sz' }, sizeTxt(st.file.size))),
         btn('바꾸기', () => pick.click(), { kind: 'ghost', size: 'sm' })));
     } else {
-      const d = h('div', { class: 'drop' + (st.err ? ' err' : ''), role: 'button', tabindex: '0', onclick: () => pick.click() }, '파일을 끌어 놓거나 ', h('span', { class: 'link' }, '선택'), h('span', { class: 'fmt' }, 'JPG·PNG'));
+      const d = h('div', { class: 'drop' + (st.err ? ' err' : ''), role: 'button', tabindex: '0', onclick: () => pick.click() }, '파일을 끌어 놓거나 ', h('span', { class: 'link' }, '선택'), h('span', { class: 'fmt' }, 'JPG·PNG·WebP'));
       d.addEventListener('dragover', (e) => { e.preventDefault(); d.classList.add('over'); });
       d.addEventListener('dragleave', () => d.classList.remove('over'));
       d.addEventListener('drop', (e) => { e.preventDefault(); take(e.dataTransfer.files[0]); });
@@ -743,10 +748,10 @@ function openAddPanel() {
     if (st.err) fileWrap.append(help(st.err, 'error'));
     addBtn.disabled = !(st.name.trim() && st.file);
   };
-  const pick = h('input', { type: 'file', accept: 'image/png,image/jpeg', hidden: true });
+  const pick = h('input', { type: 'file', accept: IMG_ACCEPT, hidden: true });
   const take = (f) => {
     if (!f) return;
-    if (!isImg(f)) { st.err = 'JPG·PNG 파일만 올릴 수 있습니다'; st.file = null; }
+    if (!isImg(f)) { st.err = 'JPG·PNG·WebP 파일만 올릴 수 있습니다'; st.file = null; }
     else if (f.size > FILE_MAX) { st.err = '50MB를 넘는 파일은 저장소에 올릴 수 없습니다'; st.file = null; }
     else { st.err = ''; st.file = f; }
     drawFile();
