@@ -2,15 +2,15 @@
    편집 중 내용은 이 PC 브라우저 IndexedDB(dameum_ar_admin)에 자동 저장한다. */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { derive, deriveHome, validHex, DEFAULT_MAIN, DEFAULT_HOME_BG, PRESET_REP, avgBottom } from './theme.js?v=3.5';
-import { sha256Hex, isoNow } from './storage.js?v=3.5';
-import { loadModel, deg, PLACEMENT_DEFAULT } from './ar.js?v=3.5';
-import { DRAG_SAFE, clampDragY, defaultGuide } from './missions.js?v=3.5';
-import { toGlb, MODEL_ACCEPT, MODEL_FMT_LABEL } from './convert.js?v=3.5';
-import { compressGlb } from './compress.js?v=3.5';
-import { GitHub, gitBlobSha, loadSettings, saveSettings, clearSettings, validRepo, siteUrl, errorInfo } from './github.js?v=3.5';
-import { normalizeConfig, normalizeMission, GUIDE_MAX, SCHEMA, BG_PRESETS, EFFECTS, BUILTIN_MODELS, builtinModelPath, isBuiltin, builtinUrl, SUCCESS_NOTE_MAX } from './config.js?v=3.5';
-import { IMG_SPECS, SRC_MAX, decodeImage, openImageEditor } from './imageEditor.js?v=3.5';
+import { derive, deriveHome, validHex, DEFAULT_MAIN, DEFAULT_HOME_BG, PRESET_REP, avgBottom } from './theme.js?v=3.6';
+import { sha256Hex, isoNow } from './storage.js?v=3.6';
+import { loadModel, deg, PLACEMENT_DEFAULT } from './ar.js?v=3.6';
+import { DRAG_SAFE, clampDragY, defaultGuide } from './missions.js?v=3.6';
+import { toGlb, MODEL_ACCEPT, MODEL_FMT_LABEL } from './convert.js?v=3.6';
+import { compressGlb } from './compress.js?v=3.6';
+import { GitHub, gitBlobSha, loadSettings, saveSettings, clearSettings, validRepo, siteUrl, errorInfo } from './github.js?v=3.6';
+import { normalizeConfig, normalizeMission, GUIDE_MAX, SCHEMA, BG_PRESETS, EFFECTS, BUILTIN_MODELS, builtinModelPath, isBuiltin, builtinUrl, SUCCESS_NOTE_MAX } from './config.js?v=3.6';
+import { IMG_SPECS, SRC_MAX, decodeImage, openImageEditor } from './imageEditor.js?v=3.6';
 
 /* ───────── 기본값 ───────── */
 const MB = 1024 * 1024;
@@ -318,7 +318,7 @@ function fileField({ path, kind = 'image', required, onFile, onClear, warn, erro
       wrap.append(h('div', { class: 'file' },
         h('span', { class: 'ft' }, kind === 'glb' ? 'GLB' : h('img', { alt: '', src: urlOf(path) })),
         h('div', { class: 'nm' }, h('div', { class: 'n ell', title: name }, name), h('div', { class: 'sz' }, sizeTxt(size) + extra)),
-        canPack ? btn('용량 줄이기', () => packExisting(), { kind: 'ghost', size: 'sm' }) : null,
+        canPack ? h('span', { class: 'f-xs t3' }, '자동 압축 대기') : null, // v3.6: 버튼 대신 자동 압축
         btn('바꾸기', () => picker.click(), { kind: 'ghost', size: 'sm' }),
         required ? null : btn('지우기', () => onClear && onClear(), { kind: 'ghost', size: 'sm' })));
       if (!err && kind === 'glb' && size > GLB_WARN) wrap.append(help('15MB를 넘어 관람객 로딩이 느려질 수 있습니다.', 'warn'));
@@ -1404,6 +1404,7 @@ function loadFromSite() {
       toast(useGh ? '저장소에서 설정을 불러왔습니다' : '사이트에서 설정을 불러왔습니다');
       go('home');
       loadIframe();
+      autoPackModels(); // v3.6: 불러온 모델 중 압축 안 된 것 자동 압축
     } catch (err) {
       console.warn(err);
       A.busy = false; renderHeader();
@@ -1441,6 +1442,7 @@ async function publish() {
   if (!validate()) return;
   A.busy = true; A.progress = 0; renderHeader();
   const done = (ok) => { A.busy = false; A.progress = null; renderHeader(); return ok; };
+  try { await autoPackModels(); } catch (e) { console.warn('발행 전 자동 압축 실패(원본으로 발행):', e); } // v3.6
   if (A.meta.needMind) {
     const ok = await compileMind({ inPublish: true });
     if (!ok) return done(false);
@@ -1476,6 +1478,34 @@ window.__admin.planPublish = async (remoteEntries = []) => {
 };
 window.__admin.publish = publish;
 window.__admin.validate = validate;
+window.__admin.autoPack = () => autoPackModels();
+
+/* v3.6 자동 압축: 아직 압축하지 않은 업로드 모델(GLB)을 찾아 Draco 로 줄인다.
+   설정 페이지를 열 때·사이트에서 불러온 뒤·발행 직전에 돈다. 이미 압축됐거나 효과가 없던 모델은 다시 시도하지 않는다. */
+let packing = null;
+function autoPackModels() {
+  if (packing) return packing;
+  packing = (async () => {
+    const paths = [...new Set(A.cfg.posters.map((p) => p.model).filter((m) => m && !isBuiltin(m) && /\.glb$/i.test(m)))];
+    let n = 0, saved = 0;
+    for (const path of paths) {
+      const meta = A.meta.files[path];
+      if (!meta || meta.failed || (meta.packed && (meta.packed.after || meta.packed.skip))) continue;
+      const src = A.blobs.get(path);
+      if (!src) continue;
+      if (src.size < 300 * 1024) { meta.packed = { skip: '작은 모델' }; continue; }
+      const pk = await packModel(src);
+      if (pk.packed && pk.packed.after) {
+        await putFile(path, pk.blob, { ...meta, packed: pk.packed });
+        n++; saved += pk.packed.before - pk.packed.after;
+      } else meta.packed = pk.packed;
+    }
+    if (n) { changed(); render(); toast(`3D 모델 ${n}개를 자동으로 압축했습니다(${sizeTxt(saved)} 줄임)`); }
+    else if (DB.db) await saveNow();
+    return n;
+  })().finally(() => { packing = null; });
+  return packing;
+}
 
 /* ───────── 시작 ───────── */
 async function boot() {
@@ -1503,5 +1533,6 @@ async function boot() {
   A.view = A.gh.token ? 'home' : 'github';
   render();
   loadIframe();
+  autoPackModels(); // v3.6: 예전에 올린 모델도 열자마자 자동으로 압축
 }
 boot();

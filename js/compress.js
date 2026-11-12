@@ -126,6 +126,27 @@ export async function compressGlb(blob, { onProgress } = {}) {
   const used = json.extensionsUsed || [];
   if (used.includes('KHR_draco_mesh_compression') || used.includes('EXT_meshopt_compression')) return keep('이미 압축됨');
   if ((json.buffers || []).length !== 1 || json.buffers[0].uri != null) return keep('외부 버퍼');
+  // v3.6: GLB 밖 파일을 가리키는 텍스처(uri 참조)는 업로드에 포함되지 않아 항상 404 가 난다.
+  // 재질에서 그 텍스처 참조만 지워 헛된 요청을 막는다(재질 색값은 그대로라 모양·색은 같다).
+  const badImg = new Set();
+  (json.images || []).forEach((im, i) => { if (im.uri && !/^data:/i.test(im.uri)) badImg.add(i); });
+  let stripped = 0;
+  if (badImg.size) {
+    const badTex = new Set();
+    (json.textures || []).forEach((t, i) => {
+      const ext = t.extensions ? Object.values(t.extensions).find((e) => e && e.source != null) : null;
+      if (badImg.has(t.source) || (ext && badImg.has(ext.source))) badTex.add(i);
+    });
+    const strip = (o) => {
+      if (!o || typeof o !== 'object') return;
+      for (const k of Object.keys(o)) {
+        const v = o[k];
+        if (v && typeof v === 'object' && /Texture$/.test(k) && typeof v.index === 'number' && badTex.has(v.index)) { delete o[k]; stripped++; }
+        else strip(v);
+      }
+    };
+    (json.materials || []).forEach(strip);
+  }
   const prims = [];
   (json.meshes || []).forEach((m) => (m.primitives || []).forEach((p) => prims.push(p)));
   const ok = (p) => (p.mode == null || p.mode === 4) && !p.targets && !p.extensions && p.attributes && p.attributes.POSITION != null
@@ -227,5 +248,5 @@ export async function compressGlb(blob, { onProgress } = {}) {
   const out = new Uint8Array(len); let o = 0; for (const c of chunks) { out.set(c, o); o += c.byteLength; }
   const res = buildGlb(json, out);
   if (res.size > before * 0.9) return keep('효과 작음');
-  return { blob: res, compressed: true, before, after: res.size, reason: '' };
+  return { blob: res, compressed: true, before, after: res.size, reason: '', stripped };
 }
