@@ -2,16 +2,16 @@
    편집 중 내용은 이 PC 브라우저 IndexedDB(dameum_ar_admin)에 자동 저장한다. */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { derive, deriveHome, validHex, DEFAULT_MAIN, DEFAULT_HOME_BG, PRESET_REP, avgBottom } from './theme.js?v=3.8';
-import { sha256Hex, isoNow } from './storage.js?v=3.8';
-import { loadModel, deg, PLACEMENT_DEFAULT } from './ar.js?v=3.8';
-import { DRAG_SAFE, clampDragY, defaultGuide } from './missions.js?v=3.8';
-import { toGlb, MODEL_ACCEPT, MODEL_FMT_LABEL } from './convert.js?v=3.8';
-import { compressGlb } from './compress.js?v=3.8';
-import { GitHub, gitBlobSha, loadSettings, saveSettings, clearSettings, validRepo, siteUrl, errorInfo } from './github.js?v=3.8';
-import { verifyPassword, seal, unseal, fetchVault, VAULT_PATH } from './vault.js?v=3.8';
-import { normalizeConfig, normalizeMission, GUIDE_MAX, SCHEMA, BG_PRESETS, EFFECTS, BUILTIN_MODELS, builtinModelPath, isBuiltin, builtinUrl, SUCCESS_NOTE_MAX } from './config.js?v=3.8';
-import { IMG_SPECS, SRC_MAX, decodeImage, openImageEditor } from './imageEditor.js?v=3.8';
+import { derive, deriveHome, validHex, DEFAULT_MAIN, DEFAULT_HOME_BG, PRESET_REP, avgBottom } from './theme.js?v=3.9';
+import { sha256Hex, isoNow } from './storage.js?v=3.9';
+import { loadModel, deg, PLACEMENT_DEFAULT } from './ar.js?v=3.9';
+import { DRAG_SAFE, clampDragY, defaultGuide } from './missions.js?v=3.9';
+import { toGlb, MODEL_ACCEPT, MODEL_FMT_LABEL } from './convert.js?v=3.9';
+import { compressGlb } from './compress.js?v=3.9';
+import { GitHub, gitBlobSha, loadSettings, saveSettings, clearSettings, validRepo, siteUrl, errorInfo } from './github.js?v=3.9';
+import { verifyPassword, seal, unseal, fetchVault, VAULT_PATH } from './vault.js?v=3.9';
+import { normalizeConfig, normalizeMission, GUIDE_MAX, SCHEMA, BG_PRESETS, EFFECTS, BUILTIN_MODELS, builtinModelPath, isBuiltin, builtinUrl, SUCCESS_NOTE_MAX } from './config.js?v=3.9';
+import { IMG_SPECS, SRC_MAX, decodeImage, openImageEditor } from './imageEditor.js?v=3.9';
 
 /* ───────── 기본값 ───────── */
 const MB = 1024 * 1024;
@@ -1282,13 +1282,22 @@ function askPassword({ title = '비밀번호를 입력해 주세요', msg = '발
   });
 }
 /* 접근 키를 비밀번호로 암호화해 저장소에 보관(이미 같은 값이면 건너뜀) */
-async function storeVault() {
-  if (!A.pw || !A.gh.token || !validRepo(A.gh.repo)) return 'skip';
-  const cur = await fetchVault();
-  if (cur) { try { const s = await unseal(A.pw, cur); if (s.token === A.gh.token && s.repo === A.gh.repo && s.branch === (A.gh.branch || 'main')) return 'same'; } catch (_) {} }
-  const v = await seal(A.pw, A.gh);
-  await new GitHub(A.gh).putOne(VAULT_PATH, new Blob([JSON.stringify(v, null, 2) + '\n'], { type: 'application/json' }), 'dameum_AR 발행 키 보관(암호화)');
-  return 'saved';
+// v3.9: 사이트(Pages)는 반영이 1~3분 늦어 방금 보관한 키를 못 보고 또 저장하다 충돌했다 → 저장소에서 바로 읽고, 동시에 두 번 돌지 않게 한다
+let vaultJob = null;
+function storeVault() {
+  if (vaultJob) return vaultJob;
+  vaultJob = (async () => {
+    if (!A.pw || !A.gh.token || !validRepo(A.gh.repo)) return 'skip';
+    const gh = new GitHub(A.gh);
+    let cur = null;
+    try { const hd = await gh.head(); const tree = await gh.tree(hd.treeSha); if (tree.has(VAULT_PATH)) cur = JSON.parse(new TextDecoder().decode(await gh.blobRaw(tree.get(VAULT_PATH)))); }
+    catch (_) { cur = await fetchVault(); }
+    if (cur) { try { const s = await unseal(A.pw, cur); if (s.token === A.gh.token && s.repo === A.gh.repo && s.branch === (A.gh.branch || 'main')) return 'same'; } catch (_) {} }
+    const v = await seal(A.pw, A.gh);
+    await gh.putOne(VAULT_PATH, new Blob([JSON.stringify(v, null, 2) + '\n'], { type: 'application/json' }), 'dameum_AR 발행 키 보관(암호화)');
+    return 'saved';
+  })().finally(() => { vaultJob = null; });
+  return vaultJob;
 }
 
 function viewGithub(ph, host) {
